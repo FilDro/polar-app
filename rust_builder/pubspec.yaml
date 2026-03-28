@@ -1,0 +1,21 @@
+name: rust_lib_polar_app
+description: Rust library for Polar App
+version: 0.0.1
+
+environment:
+  sdk: ^3.11.1
+  flutter: ">=3.3.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      ios:
+        pluginClass: RustLibPolarAppPlugin
+        ffiPlugin: true
+      macos:
+        pluginClass: RustLibPolarAppPlugin
+        ffiPlugin: true

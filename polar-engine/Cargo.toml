@@ -1,0 +1,10 @@
+[package]
+name = "polar-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+polar-rs = { path = "../../polar-rs/polar-rs" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+btleplug = "0.11"
+tracing = "0.1"
