@@ -23,6 +23,15 @@ class KineColors extends ThemeExtension<KineColors> {
   static const gray5 = Color(0xFF3F4140);
   static const gray6 = Color(0xFF212221);
 
+  // ── Slate palette (KineFlow light theme) ────────────────────
+  static const slate50  = Color(0xFFF8FAFC);
+  static const slate100 = Color(0xFFF1F5F9);
+  static const slate200 = Color(0xFFE2E8F0);
+  static const slate400 = Color(0xFF94A3B8);
+  static const slate500 = Color(0xFF64748B);
+  static const slate700 = Color(0xFF334155);
+  static const slate900 = Color(0xFF0F172A);
+
   // ── Web neutrals (near-black palette) ───────────────────────
   static const webBg = Color(0xFF0A0A0A);
   static const webText = Color(0xFFEEEEE9);
@@ -86,6 +95,23 @@ class KineColors extends ThemeExtension<KineColors> {
     success: green2,
     warning: Color(0xFFCC7B00), // orange2
     error: red3,
+  );
+
+  // ── KineFlow theme (slate light, minimalistic) ──────────────
+  static const kineFlow = KineColors._(
+    surface: Colors.white,
+    surfaceCard: slate50,
+    surfaceElevated: slate100,
+    surfaceBorder: slate200,
+    textPrimary: slate900,
+    textSecondary: slate700,
+    textMuted: slate500,
+    textDisabled: slate400,
+    primary: slate900,
+    accent: slate700,
+    success: Color(0xFF16A34A), // green-600
+    warning: Color(0xFFD97706), // amber-600
+    error: Color(0xFFDC2626),   // red-600
   );
 
   // ── Dark theme (website convention) ─────────────────────────

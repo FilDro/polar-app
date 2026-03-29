@@ -5,6 +5,7 @@ import '../services/athlete_service.dart';
 import '../services/auth_service.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
+import '../theme/theme_notifier.dart';
 
 /// Settings tab — athlete profile, HR config, sensor, and dev tools link.
 class SettingsScreen extends StatefulWidget {
@@ -272,6 +273,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
               border: OutlineInputBorder(),
             ),
             onChanged: (v) => _athlete.updateName(v),
+          ),
+
+          const SizedBox(height: KineSpacing.lg),
+
+          // Appearance section
+          _SectionHeader('Appearance', colors),
+          const SizedBox(height: KineSpacing.sm),
+          ValueListenableBuilder<AppTheme>(
+            valueListenable: ThemeNotifier.instance,
+            builder: (context, appTheme, _) => SegmentedButton<AppTheme>(
+              segments: const [
+                ButtonSegment(
+                  value: AppTheme.dark,
+                  label: Text('KINE Dark'),
+                  icon: Icon(Icons.dark_mode),
+                ),
+                ButtonSegment(
+                  value: AppTheme.kineFlow,
+                  label: Text('KineFlow'),
+                  icon: Icon(Icons.light_mode),
+                ),
+              ],
+              selected: {appTheme},
+              onSelectionChanged: (v) => ThemeNotifier.instance.setTheme(v.first),
+            ),
           ),
 
           const SizedBox(height: KineSpacing.lg),

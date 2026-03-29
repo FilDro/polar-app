@@ -1,6 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+/// KineFlow text theme — Inter for all UI text.
+/// Slate-palette light design: clean, non-taxing, high readability.
+final TextTheme kineFlowTextTheme = TextTheme(
+  displayLarge:  GoogleFonts.inter(fontSize: 34, fontWeight: FontWeight.w700),
+  displayMedium: GoogleFonts.inter(fontSize: 28, fontWeight: FontWeight.w600),
+  displaySmall:  GoogleFonts.inter(fontSize: 22, fontWeight: FontWeight.w600),
+  headlineLarge: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w500),
+  headlineMedium:GoogleFonts.inter(fontSize: 17, fontWeight: FontWeight.w600),
+  headlineSmall: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w600),
+  titleLarge:    GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w500),
+  titleMedium:   GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w500),
+  titleSmall:    GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500),
+  bodyLarge:     GoogleFonts.inter(fontSize: 17, fontWeight: FontWeight.w400),
+  bodyMedium:    GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w400),
+  bodySmall:     GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w400),
+  labelLarge:    GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w500),
+  labelMedium:   GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w500),
+  labelSmall:    GoogleFonts.inter(fontSize: 10, fontWeight: FontWeight.w500),
+);
+
 /// KINE web-convention text theme.
 /// Oswald for all UI text, Source Code Pro for data/metrics.
 final TextTheme kineWebTextTheme = TextTheme(
