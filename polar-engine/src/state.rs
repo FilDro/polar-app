@@ -2,6 +2,27 @@
 
 use std::collections::VecDeque;
 
+/// Session summary after HR processing.
+#[derive(Debug, Clone)]
+pub struct SessionSummary {
+    pub start_time: String,
+    pub duration_s: f64,
+    pub trimp_edwards: f64,
+    pub hr_avg: f64,
+    pub hr_max: u16,
+    pub hr_min: u16,
+    pub zone_seconds: Vec<f64>,   // 6 elements: [below_z1, z1, z2, z3, z4, z5]
+    pub zone_percent: Vec<f64>,   // 6 elements
+}
+
+/// Raw HR data extracted from a downloaded recording, for later processing.
+#[derive(Debug, Clone)]
+pub struct HrRecordingData {
+    pub start_time: String,
+    /// (timestamp_s, hr_bpm) pairs — timestamp relative to recording start.
+    pub samples: Vec<(f64, u16)>,
+}
+
 /// Connection state snapshot.
 #[derive(Debug, Clone)]
 pub struct ConnectionSnapshot {
@@ -83,6 +104,10 @@ pub struct FilesSnapshot {
     pub progress_text: String,
     pub downloaded_csvs: Vec<DownloadedCsv>,
     pub error: String,
+    /// Raw HR data extracted during file sync, ready for processing.
+    pub hr_data: Option<HrRecordingData>,
+    /// Session summary after HR processing.
+    pub session_summary: Option<SessionSummary>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +177,87 @@ impl Default for FilesSnapshot {
             progress_text: String::new(),
             downloaded_csvs: Vec::new(),
             error: String::new(),
+            hr_data: None,
+            session_summary: None,
+        }
+    }
+}
+
+// ── Morning check types ────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MorningCheckPhase {
+    Idle,
+    Warmup,
+    Recording,
+    Computing,
+    Done,
+    Error,
+}
+
+impl MorningCheckPhase {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Warmup => "warmup",
+            Self::Recording => "recording",
+            Self::Computing => "computing",
+            Self::Done => "done",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MorningCheckSnapshot {
+    pub phase: MorningCheckPhase,
+    pub elapsed_s: f64,
+    pub hr_bpm: u8,
+    pub ppi_count: usize,
+    pub result: Option<MorningResult>,
+    pub error: String,
+}
+
+impl Default for MorningCheckSnapshot {
+    fn default() -> Self {
+        Self {
+            phase: MorningCheckPhase::Idle,
+            elapsed_s: 0.0,
+            hr_bpm: 0,
+            ppi_count: 0,
+            result: None,
+            error: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MorningResult {
+    pub ln_rmssd: f64,
+    pub rmssd_ms: f64,
+    pub resting_hr_bpm: f64,
+    pub rr_count: usize,
+    pub readiness: String,
+    pub stability: String,
+    pub baseline_mean: f64,
+    pub baseline_sd: f64,
+    pub cv_7day: f64,
+    pub day_count: u32,
+}
+
+impl Default for MorningResult {
+    fn default() -> Self {
+        Self {
+            ln_rmssd: 0.0,
+            rmssd_ms: 0.0,
+            resting_hr_bpm: 0.0,
+            rr_count: 0,
+            readiness: String::new(),
+            stability: String::new(),
+            baseline_mean: 0.0,
+            baseline_sd: 0.0,
+            cv_7day: 0.0,
+            day_count: 0,
         }
     }
 }

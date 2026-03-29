@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'package:flutter/material.dart';
 import '../src/rust/api/polar_api.dart' as bridge;
 import '../services/ble_service.dart';
@@ -16,6 +17,10 @@ class _StreamScreenState extends State<StreamScreen> {
   final _ble = BleService.instance;
   final _stream = StreamService();
   String _selectedConfig = 'hr';
+
+  // HR history buffer (Dart-side, ~1Hz data)
+  final _hrHistory = Queue<double>();
+  static const _hrMaxPoints = 120; // 2 minutes at 1Hz
 
   static const _configs = [
     ('hr', 'Heart Rate', 'HR only (1 Hz)'),
@@ -41,7 +46,21 @@ class _StreamScreenState extends State<StreamScreen> {
   }
 
   void _onChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    // Accumulate HR history
+    final state = _stream.state;
+    if (state != null && state.hrBpm > 0) {
+      _hrHistory.addLast(state.hrBpm.toDouble());
+      while (_hrHistory.length > _hrMaxPoints) {
+        _hrHistory.removeFirst();
+      }
+    }
+    setState(() {});
+  }
+
+  void _startStream(String config) {
+    _hrHistory.clear();
+    _stream.startStream(config);
   }
 
   @override
@@ -59,11 +78,7 @@ class _StreamScreenState extends State<StreamScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (!isConnected)
-              _StatusBanner(
-                'Connect a sensor first',
-                colors.warning,
-                colors,
-              ),
+              _StatusBanner('Connect a sensor first', colors.warning, colors),
 
             // Config selector
             if (!isStreaming) ...[
@@ -97,7 +112,7 @@ class _StreamScreenState extends State<StreamScreen> {
                   ? null
                   : isStreaming
                       ? () => _stream.stopStream()
-                      : () => _stream.startStream(_selectedConfig),
+                      : () => _startStream(_selectedConfig),
               icon: Icon(isStreaming ? Icons.stop : Icons.play_arrow),
               label: Text(isStreaming ? 'Stop Streaming' : 'Start Streaming'),
               style: FilledButton.styleFrom(
@@ -106,10 +121,16 @@ class _StreamScreenState extends State<StreamScreen> {
             ),
 
             if (isStreaming && state != null) ...[
-              const SizedBox(height: KineSpacing.lg),
-              _StreamMetrics(state: state, colors: colors),
               const SizedBox(height: KineSpacing.md),
-              Expanded(child: _StreamChart(state: state, colors: colors)),
+              _StreamMetrics(state: state, colors: colors),
+              const SizedBox(height: KineSpacing.sm),
+              Expanded(
+                child: _ChartArea(
+                  state: state,
+                  hrHistory: _hrHistory.toList(),
+                  colors: colors,
+                ),
+              ),
             ],
           ],
         ),
@@ -117,6 +138,8 @@ class _StreamScreenState extends State<StreamScreen> {
     );
   }
 }
+
+// ── Status banner ────────────────────────────────────────────
 
 class _StatusBanner extends StatelessWidget {
   final String text;
@@ -140,6 +163,8 @@ class _StatusBanner extends StatelessWidget {
   }
 }
 
+// ── Metrics row ──────────────────────────────────────────────
+
 class _StreamMetrics extends StatelessWidget {
   final bridge.PolarStreamState state;
   final KineColors colors;
@@ -148,28 +173,12 @@ class _StreamMetrics extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hrBpm = state.hrBpm;
-    final sampleCount = state.sampleCount.toInt();
-    final elapsed = state.elapsedS;
-
     return Row(
       children: [
-        if (hrBpm > 0)
-          _MetricCard('HR', '$hrBpm', 'bpm', KineColors.red3, colors),
-        _MetricCard(
-          'Samples',
-          '$sampleCount',
-          '',
-          colors.primary,
-          colors,
-        ),
-        _MetricCard(
-          'Elapsed',
-          elapsed.toStringAsFixed(1),
-          's',
-          colors.textSecondary,
-          colors,
-        ),
+        if (state.hrBpm > 0)
+          _MetricCard('HR', '${state.hrBpm}', 'bpm', KineColors.red3, colors),
+        _MetricCard('Samples', '${state.sampleCount.toInt()}', '', colors.primary, colors),
+        _MetricCard('Elapsed', state.elapsedS.toStringAsFixed(1), 's', colors.textSecondary, colors),
       ],
     );
   }
@@ -194,10 +203,7 @@ class _MetricCard extends StatelessWidget {
           padding: const EdgeInsets.all(KineSpacing.inset),
           child: Column(
             children: [
-              Text(
-                label,
-                style: TextStyle(fontSize: 11, color: colors.textMuted),
-              ),
+              Text(label, style: TextStyle(fontSize: 11, color: colors.textMuted)),
               const SizedBox(height: KineSpacing.xs),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -214,10 +220,7 @@ class _MetricCard extends StatelessWidget {
                     ),
                   ),
                   if (unit.isNotEmpty)
-                    Text(
-                      ' $unit',
-                      style: TextStyle(fontSize: 12, color: colors.textMuted),
-                    ),
+                    Text(' $unit', style: TextStyle(fontSize: 12, color: colors.textMuted)),
                 ],
               ),
             ],
@@ -228,28 +231,119 @@ class _MetricCard extends StatelessWidget {
   }
 }
 
-/// Simple line chart using CustomPainter.
-class _StreamChart extends StatelessWidget {
+// ── Chart area — shows HR, ACC, GYRO based on available data ─
+
+class _ChartArea extends StatelessWidget {
   final bridge.PolarStreamState state;
+  final List<double> hrHistory;
   final KineColors colors;
 
-  const _StreamChart({required this.state, required this.colors});
+  const _ChartArea({
+    required this.state,
+    required this.hrHistory,
+    required this.colors,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final accX = state.chartAccX;
-    final accY = state.chartAccY;
-    final accZ = state.chartAccZ;
+    final hasHr = hrHistory.length >= 2;
+    final hasAcc = state.chartAccX.isNotEmpty;
+    final hasGyro = state.chartGyroX.isNotEmpty;
 
-    if (accX.isEmpty) {
-      return Center(
-        child: Text(
-          'Waiting for data...',
-          style: TextStyle(color: colors.textMuted),
+    final charts = <Widget>[];
+
+    if (hasHr) {
+      charts.add(Expanded(
+        child: _ChartCard(
+          title: 'Heart Rate (bpm)',
+          chart: CustomPaint(
+            size: Size.infinite,
+            painter: _SingleLinePainter(
+              data: hrHistory,
+              color: KineColors.red3,
+              gridColor: colors.surfaceBorder,
+              showYLabels: true,
+            ),
+          ),
+          colors: colors,
         ),
+      ));
+    }
+
+    if (hasAcc) {
+      charts.add(Expanded(
+        child: _ChartCard(
+          title: 'Accelerometer (mg)',
+          chart: CustomPaint(
+            size: Size.infinite,
+            painter: _MultiLinePainter(
+              series: [state.chartAccX, state.chartAccY, state.chartAccZ],
+              seriesColors: [KineColors.red3, KineColors.green2, KineColors.blue3],
+              gridColor: colors.surfaceBorder,
+            ),
+          ),
+          legend: const ['X', 'Y', 'Z'],
+          legendColors: const [KineColors.red3, KineColors.green2, KineColors.blue3],
+          colors: colors,
+        ),
+      ));
+    }
+
+    if (hasGyro) {
+      charts.add(Expanded(
+        child: _ChartCard(
+          title: 'Gyroscope (dps)',
+          chart: CustomPaint(
+            size: Size.infinite,
+            painter: _MultiLinePainter(
+              series: [state.chartGyroX, state.chartGyroY, state.chartGyroZ],
+              seriesColors: [KineColors.red3, KineColors.green2, KineColors.blue3],
+              gridColor: colors.surfaceBorder,
+            ),
+          ),
+          legend: const ['X', 'Y', 'Z'],
+          legendColors: const [KineColors.red3, KineColors.green2, KineColors.blue3],
+          colors: colors,
+        ),
+      ));
+    }
+
+    if (charts.isEmpty) {
+      return Center(
+        child: Text('Waiting for data...', style: TextStyle(color: colors.textMuted)),
       );
     }
 
+    return Column(
+      children: [
+        for (int i = 0; i < charts.length; i++) ...[
+          if (i > 0) const SizedBox(height: KineSpacing.sm),
+          charts[i],
+        ],
+      ],
+    );
+  }
+}
+
+// ── Chart card wrapper ───────────────────────────────────────
+
+class _ChartCard extends StatelessWidget {
+  final String title;
+  final Widget chart;
+  final List<String>? legend;
+  final List<Color>? legendColors;
+  final KineColors colors;
+
+  const _ChartCard({
+    required this.title,
+    required this.chart,
+    this.legend,
+    this.legendColors,
+    required this.colors,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Card(
       color: colors.surfaceCard,
       child: Padding(
@@ -258,36 +352,23 @@ class _StreamChart extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Accelerometer',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: colors.textSecondary,
-              ),
-            ),
-            const SizedBox(height: KineSpacing.sm),
-            Expanded(
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: _LinePainter(
-                  series: [accX, accY, accZ],
-                  seriesColors: [KineColors.red3, KineColors.green2, KineColors.blue3],
-                  bgColor: colors.surfaceCard,
-                  gridColor: colors.surfaceBorder,
-                ),
-              ),
+              title,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: colors.textSecondary),
             ),
             const SizedBox(height: KineSpacing.xs),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _LegendDot('X', KineColors.red3),
-                const SizedBox(width: KineSpacing.md),
-                _LegendDot('Y', KineColors.green2),
-                const SizedBox(width: KineSpacing.md),
-                _LegendDot('Z', KineColors.blue3),
-              ],
-            ),
+            Expanded(child: chart),
+            if (legend != null && legendColors != null) ...[
+              const SizedBox(height: KineSpacing.xs),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (int i = 0; i < legend!.length; i++) ...[
+                    if (i > 0) const SizedBox(width: KineSpacing.md),
+                    _LegendDot(legend![i], legendColors![i]),
+                  ],
+                ],
+              ),
+            ],
           ],
         ),
       ),
@@ -308,22 +389,100 @@ class _LegendDot extends StatelessWidget {
       children: [
         Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontSize: 11, color: KineColors.of(context).textMuted)),
+        Text(label, style: TextStyle(fontSize: 10, color: KineColors.of(context).textMuted)),
       ],
     );
   }
 }
 
-class _LinePainter extends CustomPainter {
+// ── Single-line painter (HR) ─────────────────────────────────
+
+class _SingleLinePainter extends CustomPainter {
+  final List<double> data;
+  final Color color;
+  final Color gridColor;
+  final bool showYLabels;
+
+  _SingleLinePainter({
+    required this.data,
+    required this.color,
+    required this.gridColor,
+    this.showYLabels = false,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (data.length < 2) return;
+
+    final leftPad = showYLabels ? 36.0 : 0.0;
+    final chartW = size.width - leftPad;
+    final chartH = size.height;
+
+    double minVal = data.reduce((a, b) => a < b ? a : b);
+    double maxVal = data.reduce((a, b) => a > b ? a : b);
+    // Ensure some padding
+    final padding = (maxVal - minVal) * 0.1;
+    if (padding < 2) {
+      minVal -= 5;
+      maxVal += 5;
+    } else {
+      minVal -= padding;
+      maxVal += padding;
+    }
+    final range = maxVal - minVal;
+
+    // Grid
+    final gridPaint = Paint()..color = gridColor.withValues(alpha: 0.3)..strokeWidth = 0.5;
+    for (int i = 0; i <= 4; i++) {
+      final y = chartH * i / 4;
+      canvas.drawLine(Offset(leftPad, y), Offset(size.width, y), gridPaint);
+
+      if (showYLabels) {
+        final val = maxVal - (range * i / 4);
+        final tp = TextPainter(
+          text: TextSpan(
+            text: val.toStringAsFixed(0),
+            style: TextStyle(fontSize: 9, color: gridColor.withValues(alpha: 0.6)),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        tp.paint(canvas, Offset(leftPad - tp.width - 4, y - tp.height / 2));
+      }
+    }
+
+    // Line
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    final path = Path();
+    for (int i = 0; i < data.length; i++) {
+      final x = leftPad + chartW * i / (data.length - 1);
+      final y = chartH - (data[i] - minVal) / range * chartH;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _SingleLinePainter old) => true;
+}
+
+// ── Multi-line painter (ACC/GYRO) ────────────────────────────
+
+class _MultiLinePainter extends CustomPainter {
   final List<List<double>> series;
   final List<Color> seriesColors;
-  final Color bgColor;
   final Color gridColor;
 
-  _LinePainter({
+  _MultiLinePainter({
     required this.series,
     required this.seriesColors,
-    required this.bgColor,
     required this.gridColor,
   });
 
@@ -331,10 +490,9 @@ class _LinePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (series.isEmpty || series[0].isEmpty) return;
 
-    // Show last 500 points
-    final maxPoints = 500;
+    const maxPoints = 500;
 
-    // Find global min/max across all series
+    // Global min/max across all series
     double globalMin = double.infinity;
     double globalMax = double.negativeInfinity;
     for (final s in series) {
@@ -346,9 +504,9 @@ class _LinePainter extends CustomPainter {
     }
 
     final range = (globalMax - globalMin).abs();
-    if (range < 1) return;
+    if (range < 0.01) return;
 
-    // Draw grid
+    // Grid
     final gridPaint = Paint()..color = gridColor.withValues(alpha: 0.3)..strokeWidth = 0.5;
     for (int i = 0; i <= 4; i++) {
       final y = size.height * i / 4;
@@ -364,7 +522,7 @@ class _LinePainter extends CustomPainter {
 
       final paint = Paint()
         ..color = seriesColors[si]
-        ..strokeWidth = 1.2
+        ..strokeWidth = 1.0
         ..style = PaintingStyle.stroke;
 
       final path = Path();
@@ -382,5 +540,5 @@ class _LinePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _LinePainter old) => true;
+  bool shouldRepaint(covariant _MultiLinePainter old) => true;
 }

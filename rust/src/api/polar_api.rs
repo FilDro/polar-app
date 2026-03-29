@@ -93,6 +93,46 @@ pub struct PolarFilesState {
     pub progress_text: String,
     pub downloaded_csvs: Vec<PolarDownloadedCsv>,
     pub error: String,
+    pub session_summary: Option<PolarSessionSummary>,
+}
+
+#[flutter_rust_bridge::frb]
+#[derive(Debug, Clone)]
+pub struct PolarMorningCheckState {
+    pub phase: String,
+    pub elapsed_s: f64,
+    pub hr_bpm: u8,
+    pub ppi_count: u32,
+    pub result: Option<PolarMorningResult>,
+    pub error: String,
+}
+
+#[flutter_rust_bridge::frb]
+#[derive(Debug, Clone)]
+pub struct PolarMorningResult {
+    pub ln_rmssd: f64,
+    pub rmssd_ms: f64,
+    pub resting_hr_bpm: f64,
+    pub rr_count: u32,
+    pub readiness: String,
+    pub stability: String,
+    pub baseline_mean: f64,
+    pub baseline_sd: f64,
+    pub cv_7day: f64,
+    pub day_count: u32,
+}
+
+#[flutter_rust_bridge::frb]
+#[derive(Debug, Clone)]
+pub struct PolarSessionSummary {
+    pub start_time: String,
+    pub duration_s: f64,
+    pub trimp_edwards: f64,
+    pub hr_avg: f64,
+    pub hr_max: u16,
+    pub hr_min: u16,
+    pub zone_seconds: Vec<f64>,
+    pub zone_percent: Vec<f64>,
 }
 
 // ── Type conversions ────────────────────────────────────────────
@@ -185,6 +225,52 @@ impl From<polar_engine::state::FilesSnapshot> for PolarFilesState {
             entries: s.entries.into_iter().map(PolarFileEntry::from).collect(),
             progress_text: s.progress_text,
             downloaded_csvs: s.downloaded_csvs.into_iter().map(PolarDownloadedCsv::from).collect(),
+            error: s.error,
+            session_summary: s.session_summary.map(PolarSessionSummary::from),
+        }
+    }
+}
+
+impl From<polar_engine::state::SessionSummary> for PolarSessionSummary {
+    fn from(s: polar_engine::state::SessionSummary) -> Self {
+        Self {
+            start_time: s.start_time,
+            duration_s: s.duration_s,
+            trimp_edwards: s.trimp_edwards,
+            hr_avg: s.hr_avg,
+            hr_max: s.hr_max,
+            hr_min: s.hr_min,
+            zone_seconds: s.zone_seconds,
+            zone_percent: s.zone_percent,
+        }
+    }
+}
+
+impl From<polar_engine::state::MorningResult> for PolarMorningResult {
+    fn from(r: polar_engine::state::MorningResult) -> Self {
+        Self {
+            ln_rmssd: r.ln_rmssd,
+            rmssd_ms: r.rmssd_ms,
+            resting_hr_bpm: r.resting_hr_bpm,
+            rr_count: r.rr_count as u32,
+            readiness: r.readiness,
+            stability: r.stability,
+            baseline_mean: r.baseline_mean,
+            baseline_sd: r.baseline_sd,
+            cv_7day: r.cv_7day,
+            day_count: r.day_count,
+        }
+    }
+}
+
+impl From<polar_engine::state::MorningCheckSnapshot> for PolarMorningCheckState {
+    fn from(s: polar_engine::state::MorningCheckSnapshot) -> Self {
+        Self {
+            phase: s.phase.as_str().to_string(),
+            elapsed_s: s.elapsed_s,
+            hr_bpm: s.hr_bpm,
+            ppi_count: s.ppi_count as u32,
+            result: s.result.map(PolarMorningResult::from),
             error: s.error,
         }
     }
@@ -280,6 +366,19 @@ pub fn polar_poll_files() -> PolarFilesState {
     })
 }
 
+// ── Session Processing API ─────────────────────────────────────
+
+/// Process the most recently downloaded HR recording into a session summary.
+/// Call after polar_sync_files() completes and events have been polled.
+/// Returns None if no HR data was downloaded.
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_process_session(hr_max: u16, hr_rest: u16) -> Option<PolarSessionSummary> {
+    with_session(|s| {
+        s.process_session(hr_max, hr_rest)
+            .map(PolarSessionSummary::from)
+    })
+}
+
 // ── Trigger API ─────────────────────────────────────────────────
 
 #[flutter_rust_bridge::frb(sync)]
@@ -290,4 +389,34 @@ pub fn polar_set_trigger(mode: String) {
 #[flutter_rust_bridge::frb(sync)]
 pub fn polar_get_trigger() {
     with_session(|s| s.get_trigger());
+}
+
+// ── Morning Check API ──────────────────────────────────────────
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_start_morning_check() {
+    with_session(|s| s.start_morning_check());
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_stop_morning_check() {
+    with_session(|s| s.stop_morning_check());
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_poll_morning_check() -> PolarMorningCheckState {
+    with_session(|s| {
+        s.process_events();
+        s.morning_check_snapshot().into()
+    })
+}
+
+/// Compute morning result. Call after phase == "computing".
+/// baseline_history: historical lnRMSSD values (up to 60 days, excluding today).
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_compute_morning_result(baseline_history: Vec<f64>) -> PolarMorningResult {
+    with_session(|s| {
+        let result = s.compute_morning_result(&baseline_history);
+        PolarMorningResult::from(result)
+    })
 }

@@ -15,12 +15,12 @@ use polar_rs::offline::workflow;
 use polar_rs::pftp::client::PftpClient;
 use polar_rs::pmd::codec::parse_pmd_frame;
 use polar_rs::pmd::commands;
-use polar_rs::pmd::data_types::PmdSamples;
+use polar_rs::pmd::data_types::{PmdSamples, PpiSample};
 use polar_rs::services::{battery, device_info, heart_rate};
 use polar_rs::types::{MeasurementType, RecordingType};
 
 use crate::state::{
-    DownloadedCsv, FileEntry, ScannedDevice,
+    DownloadedCsv, FileEntry, HrRecordingData, ScannedDevice,
 };
 
 /// Commands sent from the main thread to the BLE runtime.
@@ -44,6 +44,9 @@ pub enum BleCommand {
     // Trigger
     SetTrigger { mode: String },
     GetTrigger,
+    // Morning check
+    StartMorningCheck,
+    StopMorningCheck,
 }
 
 #[derive(Debug, Clone)]
@@ -122,10 +125,24 @@ pub enum BleEvent {
     FileSyncProgress(String),
     FileDownloaded(DownloadedCsv),
     FileSyncComplete,
+    /// Raw HR time series extracted from an offline recording.
+    HrDataReady(HrRecordingData),
 
     // Trigger
     TriggerStatus(String),
     TriggerSet(String),
+
+    // Morning check
+    MorningCheckProgress {
+        phase: String,
+        elapsed_s: f64,
+        hr_bpm: u8,
+        ppi_count: usize,
+    },
+    MorningCheckComplete {
+        samples: Vec<PpiSample>,
+    },
+    MorningCheckError(String),
 }
 
 /// The BLE runtime handle. Lives on the main thread.
@@ -266,6 +283,16 @@ async fn ble_runtime_loop(
                 if let Some(ref p) = peripheral {
                     handle_get_trigger(p, &event_tx).await;
                 }
+            }
+            BleCommand::StartMorningCheck => {
+                if let Some(ref p) = peripheral {
+                    handle_morning_check(p, &event_tx, &cmd_rx).await;
+                } else {
+                    let _ = event_tx.send(BleEvent::MorningCheckError("Not connected".into()));
+                }
+            }
+            BleCommand::StopMorningCheck => {
+                // Morning check loop checks for this via cmd_rx
             }
         }
     }
@@ -597,6 +624,113 @@ async fn stream_hr_and_pmd(
     }
 }
 
+async fn handle_morning_check(
+    p: &PolarPeripheral,
+    event_tx: &mpsc::Sender<BleEvent>,
+    cmd_rx: &mpsc::Receiver<BleCommand>,
+) {
+    use polar_rs::ble::transport::BleTransport;
+    use std::time::Instant;
+
+    // Enable notifications on PMD CP and PMD DATA
+    if let Err(e) = p.enable_notifications(uuids::PMD_CP).await {
+        let _ = event_tx.send(BleEvent::MorningCheckError(format!("PMD CP notify failed: {}", e)));
+        return;
+    }
+    if let Err(e) = p.enable_notifications(uuids::PMD_DATA).await {
+        let _ = event_tx.send(BleEvent::MorningCheckError(format!("PMD DATA notify failed: {}", e)));
+        return;
+    }
+
+    // Start PPI online stream (no settings needed)
+    let start_cmd = commands::build_start_no_settings(MeasurementType::Ppi, RecordingType::Online);
+    if let Err(e) = p.write(uuids::PMD_CP, &start_cmd, polar_rs::ble::transport::WriteType::WithResponse).await {
+        let _ = event_tx.send(BleEvent::MorningCheckError(format!("PPI start failed: {}", e)));
+        return;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Subscribe to PMD_DATA for PPI frames
+    let mut rx = match p.subscribe(uuids::PMD_DATA).await {
+        Ok(rx) => rx,
+        Err(e) => {
+            let _ = event_tx.send(BleEvent::MorningCheckError(format!("PMD subscribe failed: {}", e)));
+            return;
+        }
+    };
+
+    let start_time = Instant::now();
+    let total_duration = Duration::from_secs(85);
+    let warmup_duration = Duration::from_secs(25);
+    let mut all_samples: Vec<PpiSample> = Vec::new();
+    let mut last_progress = Instant::now();
+    let mut latest_hr: u8 = 0;
+
+    // Streaming loop
+    loop {
+        // Check for cancellation
+        if let Ok(cmd) = cmd_rx.try_recv() {
+            if matches!(cmd, BleCommand::StopMorningCheck | BleCommand::Disconnect) {
+                break;
+            }
+        }
+
+        let elapsed = start_time.elapsed();
+
+        // Time's up
+        if elapsed >= total_duration {
+            break;
+        }
+
+        // Read data with timeout
+        match tokio::time::timeout(Duration::from_millis(2000), rx.recv()).await {
+            Ok(Ok(notif)) => {
+                if let Ok(frame) = parse_pmd_frame(&notif.data, 1.0) {
+                    if let PmdSamples::Ppi(ref samples) = frame.samples {
+                        for s in samples {
+                            latest_hr = s.hr;
+                            all_samples.push(s.clone());
+                        }
+                    }
+                }
+            }
+            Ok(Err(_)) => {
+                // Channel closed (disconnected)
+                let _ = event_tx.send(BleEvent::MorningCheckError("BLE disconnected during morning check".into()));
+                return;
+            }
+            Err(_) => {
+                // Timeout, continue waiting
+            }
+        }
+
+        // Emit progress ~1s
+        if last_progress.elapsed() >= Duration::from_secs(1) {
+            let phase = if elapsed < warmup_duration {
+                "warmup"
+            } else {
+                "recording"
+            };
+            let _ = event_tx.send(BleEvent::MorningCheckProgress {
+                phase: phase.to_string(),
+                elapsed_s: elapsed.as_secs_f64(),
+                hr_bpm: latest_hr,
+                ppi_count: all_samples.len(),
+            });
+            last_progress = Instant::now();
+        }
+    }
+
+    // Stop PPI stream
+    let stop_cmd = commands::build_stop_stream(MeasurementType::Ppi);
+    let _ = p.write(uuids::PMD_CP, &stop_cmd, polar_rs::ble::transport::WriteType::WithResponse).await;
+
+    // Emit completion
+    let _ = event_tx.send(BleEvent::MorningCheckComplete {
+        samples: all_samples,
+    });
+}
+
 fn parse_measurement_types(types: &[String]) -> Vec<MeasurementType> {
     types
         .iter()
@@ -748,6 +882,12 @@ async fn handle_sync_files(
 
         match download_recording(&pftp, entry).await {
             Ok(recording) => {
+                // If this is an HR recording, extract the time series for session processing
+                if entry.data_type == "HR" {
+                    let hr_data = extract_hr_data(&recording);
+                    let _ = event_tx.send(BleEvent::HrDataReady(hr_data));
+                }
+
                 let csv = recording_to_csv(&recording);
                 let session_time = entry.path.split('/').rev().nth(1).unwrap_or("unknown");
                 let type_name = entry.path.split('/').last().unwrap_or("REC").replace(".REC", "");
@@ -825,6 +965,45 @@ async fn handle_get_trigger(
         Err(e) => {
             let _ = event_tx.send(BleEvent::Error(format!("Get trigger failed: {}", e)));
         }
+    }
+}
+
+/// Extract HR time series from an offline recording for session processing.
+fn extract_hr_data(
+    recording: &polar_rs::offline::file_format::OfflineRecording,
+) -> HrRecordingData {
+    use polar_rs::pmd::timestamps::distribute_timestamps;
+
+    let mut samples = Vec::new();
+    let mut prev_ts: Option<u64> = None;
+    let sample_rate = recording.settings.sample_rates.first().copied().unwrap_or(1);
+    let mut base_ns: Option<u64> = None;
+
+    for frame in &recording.frames {
+        if let PmdSamples::Hr(hr_samples) = &frame.samples {
+            let count = frame.samples.len();
+            let timestamps = distribute_timestamps(frame.timestamp_ns, prev_ts, count, sample_rate);
+            prev_ts = Some(frame.timestamp_ns);
+
+            if base_ns.is_none() {
+                base_ns = Some(*timestamps.first().unwrap_or(&frame.timestamp_ns));
+            }
+            let base = base_ns.unwrap();
+
+            for (i, s) in hr_samples.iter().enumerate() {
+                let ts_ns = timestamps.get(i).copied().unwrap_or(frame.timestamp_ns);
+                let ts_s = (ts_ns - base) as f64 / 1_000_000_000.0;
+                let hr = if s.corrected_hr > 0 { s.corrected_hr } else { s.hr };
+                if hr > 0 {
+                    samples.push((ts_s, hr as u16));
+                }
+            }
+        }
+    }
+
+    HrRecordingData {
+        start_time: recording.start_time.clone(),
+        samples,
     }
 }
 

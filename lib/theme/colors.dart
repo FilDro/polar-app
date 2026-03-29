@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 
-/// KINE design system colors (v3.0).
-/// Accessed via KineColors.of(context).
+/// KINE design system colors (v3.0) — website convention.
+///
+/// Near-black background (#0A0A0A), gold primary CTA, translucent surfaces.
+/// See design.md sections 2 (Web neutrals) and 3 (Web tokens).
 class KineColors extends ThemeExtension<KineColors> {
-  // Brand
+  // ── Brand colors ────────────────────────────────────────────
   static const gold2 = Color(0xFFFFCF00);
+  static const gold3 = Color(0xFFCC9F00);
   static const green2 = Color(0xFF16C47F);
   static const blue3 = Color(0xFF3081DD);
   static const yellow0 = Color(0xFFFFD65A);
   static const orange1 = Color(0xFFFF9D23);
   static const red3 = Color(0xFFF93827);
 
-  // Neutrals (warm gray)
+  // ── Warm gray (data-viz, BLE states — not theme surfaces) ──
   static const gray0 = Color(0xFFEFF1F0);
   static const gray1 = Color(0xFFCED4D1);
   static const gray2 = Color(0xFFA8ADAA);
@@ -20,14 +23,24 @@ class KineColors extends ThemeExtension<KineColors> {
   static const gray5 = Color(0xFF3F4140);
   static const gray6 = Color(0xFF212221);
 
-  // BLE connection states
+  // ── Web neutrals (near-black palette) ───────────────────────
+  static const webBg = Color(0xFF0A0A0A);
+  static const webText = Color(0xFFEEEEE9);
+  static const webTextSecondary = Color(0xFFA0A09C);
+  static const webTextTertiary = Color(0xFF6B6B68);
+  // Composited on #0A0A0A for const-compatibility:
+  static const webSurfaceCard = Color(0xFF171717);   // rgba(255,255,255,0.05)
+  static const webSurfaceMuted = Color(0xFF1E1E1E);  // rgba(255,255,255,0.08)
+  static const webBorder = Color(0xFF282828);         // rgba(255,255,255,0.12)
+
+  // ── BLE connection states (brightness-independent) ──────────
   static const bleDisconnected = gray3;
   static const bleScanning = blue3;
   static const bleConnecting = yellow0;
   static const bleConnected = green2;
   static const bleError = red3;
 
-  // Semantic tokens
+  // ── Semantic tokens ─────────────────────────────────────────
   final Color surface;
   final Color surfaceCard;
   final Color surfaceElevated;
@@ -58,6 +71,7 @@ class KineColors extends ThemeExtension<KineColors> {
     required this.error,
   });
 
+  // ── Light theme (kept as compile-time fallback) ─────────────
   static const light = KineColors._(
     surface: Colors.white,
     surfaceCard: gray0,
@@ -68,30 +82,31 @@ class KineColors extends ThemeExtension<KineColors> {
     textMuted: gray3,
     textDisabled: gray2,
     primary: blue3,
-    accent: Color(0xFFCC9F00), // gold3
+    accent: gold3,
     success: green2,
     warning: Color(0xFFCC7B00), // orange2
     error: red3,
   );
 
+  // ── Dark theme (website convention) ─────────────────────────
   static const dark = KineColors._(
-    surface: gray6,
-    surfaceCard: gray5,
-    surfaceElevated: gray4,
-    surfaceBorder: gray4,
-    textPrimary: gray0,
-    textSecondary: gray1,
-    textMuted: gray3,
-    textDisabled: gray3,
-    primary: Color(0xFF75A6F6), // blue2
-    accent: gold2,
-    success: Color(0xFF1EF09D), // green1
+    surface: webBg,                   // #0A0A0A
+    surfaceCard: webSurfaceCard,      // #171717
+    surfaceElevated: webSurfaceMuted, // #1E1E1E
+    surfaceBorder: webBorder,         // #282828
+    textPrimary: webText,             // #EEEEE9
+    textSecondary: webTextSecondary,  // #A0A09C
+    textMuted: webTextTertiary,       // #6B6B68
+    textDisabled: Color(0xFF4A4A48),
+    primary: gold2,                   // Gold is the primary CTA
+    accent: blue3,                    // Blue = KineSense identity
+    success: Color(0xFF1EF09D),       // green1
     warning: orange1,
-    error: Color(0xFFFA8985), // red2
+    error: Color(0xFFFA8985),         // red2
   );
 
   static KineColors of(BuildContext context) {
-    return Theme.of(context).extension<KineColors>() ?? light;
+    return Theme.of(context).extension<KineColors>() ?? dark;
   }
 
   static Color bleStateColor(String status) {

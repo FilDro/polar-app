@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "polar-core",
     "polar-engine",
     "rust",
 ]
