@@ -52,7 +52,7 @@ Polar Verity Sense                       Polar Verity Sense
   (on bicep, supine)                       (on bicep, training)
         │                                        │
         │ BLE (1-min PPI)                        │ Offline recording
-        ▼                                        │ HR + PPI to flash
+        ▼                                        │ HR + IMU to flash
   ┌───────────┐                                  │
   │ Phone App │                                  │ Session ends
   │           │                                  ▼
@@ -104,12 +104,15 @@ Polar Verity Sense                       Polar Verity Sense
 **Computation:**
 
 ```
-1. Filter PPI: remove intervals < 300ms or > 2000ms (artifact rejection)
-2. Remove ectopic beats: if successive difference > 20% of local mean, interpolate
-3. RMSSD = sqrt(mean(successive_differences²))
-4. lnRMSSD = ln(RMSSD)
-5. Resting HR = 60000 / mean(valid_RR_intervals)
+1. Discard warmup samples (first 25 seconds, error_estimate typically 30+)
+2. RMSSD = sqrt(mean(successive_differences²))
+3. lnRMSSD = ln(RMSSD)
+4. Resting HR = 60000 / mean(RR_intervals)
 ```
+
+PPI data from Polar Verity Sense at rest is clean — no RR filtering or ectopic
+beat removal needed. The sensor's own quality indicators (error_estimate, blocker
+flag) are sufficient. Only warmup samples need discarding.
 
 **Baseline & scoring:**
 
@@ -140,8 +143,7 @@ Stability:
   "ln_rmssd": 4.21,
   "rmssd_ms": 67.4,
   "rr_mean_ms": 1034,
-  "rr_count": 58,
-  "artifact_percent": 3.4,
+  "rr_count": 42,
   "readiness": "green",
   "baseline_mean": 4.15,
   "baseline_sd": 0.22,
@@ -149,7 +151,7 @@ Stability:
 }
 ```
 
-**Minimum data quality:** Recording must have >= 50 valid RR intervals after artifact removal. If artifact_percent > 15%, discard and prompt athlete to re-record.
+**Minimum data quality:** Recording must have >= 30 valid PPI samples after warmup discard. If fewer, prompt athlete to re-record ("Stay still and try again").
 
 ---
 
@@ -254,7 +256,7 @@ below_z1_s = time with hr_reserve_fraction < z1_lower
 Edwards TRIMP = (z1_minutes * 1) + (z2_minutes * 2) + (z3_minutes * 3) + (z4_minutes * 4) + (z5_minutes * 5)
 ```
 
-**Longitudinal metrics (computed in cloud):**
+**Longitudinal metrics (computed client-side in dashboard):**
 
 ```
 acute_load = sum(TRIMP over last 7 days)
@@ -309,11 +311,10 @@ CREATE TABLE teams (
 );
 
 CREATE TABLE coaches (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id          UUID PRIMARY KEY REFERENCES auth.users(id),  -- Supabase Auth user ID
     team_id     UUID REFERENCES teams(id),
     name        TEXT NOT NULL,
     email       TEXT UNIQUE NOT NULL,
-    password    TEXT NOT NULL,
     created_at  TIMESTAMPTZ DEFAULT now()
 );
 
@@ -339,7 +340,6 @@ CREATE TABLE daily_wellness (
     ln_rmssd        REAL NOT NULL,
     rmssd_ms        REAL NOT NULL,
     rr_count        INT NOT NULL,
-    artifact_pct    REAL NOT NULL,
     readiness       TEXT NOT NULL,            -- green / amber / red
     baseline_mean   REAL,
     baseline_sd     REAL,
@@ -402,7 +402,7 @@ GET /rest/v1/sessions?athlete_id=eq.uuid&date=gte.2026-03-01&order=date
 
 ### Derived Metrics (computed client-side in dashboard)
 
-ACWR, monotony, strain, and baseline scoring are computed in the dashboard from raw daily_wellness + sessions data. No server-side computation needed — the dataset is small enough (30 athletes x 365 days = ~11K rows/year) to fetch and compute in the browser/app.
+The cloud acts as a **relay and storage layer only** — no server-side computation. ACWR, monotony, strain, and baseline scoring are computed in the dashboard from raw daily_wellness + sessions data. The dataset is small enough (30 athletes x 365 days = ~11K rows/year) to fetch and compute in the browser/app.
 
 ```
 -- Example: readiness grid query (all athletes, today)
@@ -436,13 +436,17 @@ GET /rest/v1/sessions?athlete_id=eq.uuid&date=gte.2026-01-28&order=date
   - Days 7-13: traffic light appears with "~" indicator (preliminary)
   - Day 14+: full confident traffic light
 - Auto-uploads to Supabase
-- If artifact > 15%: "Recording quality too low. Please try again."
+- If < 30 valid samples after warmup: "Not enough data. Stay still and try again."
 - If sensor not found within 10s: "Make sure your sensor is on and nearby."
 
 **7.3 Sync Session**
 - "Sync Training Data" button
 - Connects to sensor via BLE
-- Downloads all .REC files
+- Downloads all .REC files from sensor
+- Deletes .REC files from sensor after successful download (frees flash for next session)
+- Processes HR data → TRIMP, zones
+- Stores IMU files (ACC, GYRO, MAG) on phone for future use
+- Uploads session summary to Supabase
 - Progress indicator: "Downloading... Processing... Uploading..."
 - On completion: shows session summary (TRIMP, duration, HR zones bar chart)
 - Option to add session label (e.g., "Match", "Training", "Gym")
@@ -592,13 +596,33 @@ Top-of-dashboard alert banner when conditions trigger:
 
 | Layer | Technology | Notes |
 |-------|-----------|-------|
-| Sensor | Polar Verity Sense (bicep) | Offline HR+PPI recording, BLE PPI streaming for morning check |
+| Sensor | Polar Verity Sense (bicep) | Offline HR+IMU recording, BLE PPI streaming for morning check |
 | Phone app | Flutter (iOS + macOS) + Rust core via flutter_rust_bridge | polar-rs for BLE, polar-engine for session management |
 | BLE communication | polar-rs (Rust, btleplug) | Cross-platform, no Polar SDK dependency |
 | Signal processing | Rust (HRV, TRIMP, zone classification) | Validated against NeuroKit2 |
-| Cloud backend | **Supabase** (PostgreSQL + Auth + REST/Realtime) | Hosted PostgreSQL, built-in JWT auth, row-level security, realtime subscriptions for dashboard |
+| Data visualization | **kine_charts** (Flutter package) | Line, bar, scatter charts. Shared across phone app and dashboard |
+| Design system | **KINE Design System v3.0** (`design.md`) | Brand gold #FFCF00, warm grays, BLE state colors, traffic light palette |
+| Cloud backend | **Supabase** (PostgreSQL + Auth + REST/Realtime) | Relay + storage only. No server-side computation. Built-in JWT auth, row-level security, realtime subscriptions for dashboard |
 | Coach dashboard | **Flutter Web** with kine_charts | Shared codebase with mobile app, reuses KINE design system and charting |
 | Auth | Supabase Auth (JWT, email/password) | Coach and athlete roles via Supabase RLS policies |
+
+### Design & Visualization References
+
+**Design system:** `design.md` defines the KINE visual language — colors, typography, spacing, component patterns, and BLE state indicators. All screens (phone app and dashboard) follow this spec.
+
+**Key design tokens:**
+- Brand: gold `#FFCF00`, green `#16C47F`, blue `#3081DD`
+- Readiness traffic light: green `#16C47F`, amber `#FFD65A`, red `#F93827`
+- BLE states: disconnected (gray), scanning (blue pulse), connected (green), error (red)
+- Neutrals: warm grays (`#1A1A1A` → `#F5F5F0`)
+
+**kine_charts** is the shared charting package used for:
+- lnRMSSD trend line (7/14/28 day sparklines)
+- Resting HR trend line
+- TRIMP daily bar charts
+- HR zone distribution stacked bars
+- ACWR timeline
+- Readiness traffic light grid (custom widget, not a chart)
 
 ---
 
@@ -623,28 +647,129 @@ BLE PPI streaming (real-time, no offline recording):
 
 ```
 Offline recording:
-  polar-cli record start <id> hr
+  polar-cli record start <id> hr,acc,gyro,mag
 
-  - HR: ~1 Hz, bpm values
-  - No PPI during training for V1 (quality during movement unvalidated)
-  - No ACC/GYRO needed for V1 cardiovascular metrics
-  - Storage: ~11 KB per 90-min session
-  - Battery impact: minimal (HR LED already active)
+  - HR: ~1 Hz, bpm values (used for TRIMP/zones in V1)
+  - ACC: 52 Hz, 3-axis accelerometer
+  - GYRO: 52 Hz, 3-axis gyroscope
+  - MAG: 50 Hz, 3-axis magnetometer
+  - IMU data recorded for future use (sprint detection, player load) — not processed in V1
+  - No SDK mode (HR LED stays active for concurrent HR + IMU)
+  - Storage: ~3.4 MB per 90-min session (measured at rest, higher during activity)
+  - Battery impact: moderate (HR LED + IMU sensors active)
 ```
 
 ### Trigger Configuration
 
 ```
-polar-cli trigger set <id> system-start
+polar-cli trigger setup <id> system-start acc,gyro,mag,hr
 
-  - Sensor auto-starts HR+PPI recording on power-on
+  - Configures trigger mode AND recording types in one command
+  - Each type configured with default settings (ACC/GYRO 52Hz, MAG 50Hz, HR)
+  - One-time setup per sensor — persists across power cycles
+  - Sensor auto-starts HR+ACC+GYRO+MAG recording on every power-on
   - Athlete just puts sensor on — no phone interaction needed for training
   - Phone only needed post-session for sync
 ```
 
 ---
 
-## 11. Processing Pipeline (Rust Core)
+## 11. Sensor Management
+
+### Lifecycle
+
+Each Polar Verity Sense goes through this lifecycle:
+
+```
+PROVISION (once per sensor)
+  ↓
+DAILY USE (morning check + training + sync)
+  ↓
+OFFSEASON (battery dies, re-provision next season)
+```
+
+### Provisioning (one-time per sensor)
+
+Done by coach or admin via the athlete app or CLI:
+
+```
+1. Scan for sensor
+2. Connect
+3. Set device time to host clock
+4. Configure trigger: polar-cli trigger setup <id> system-start acc,gyro,mag,hr
+5. Bind sensor ID to athlete in Supabase (athletes.sensor_id = "110DF930")
+6. Verify with: polar-cli trigger get <id>
+```
+
+After provisioning, the sensor auto-records HR+ACC+GYRO+MAG on every power-on. No per-session configuration needed.
+
+### Daily Morning Check
+
+```
+1. Athlete puts sensor on bicep → sensor powers on → trigger fires, recording starts
+2. Athlete opens app → "Morning Check"
+3. App connects via BLE
+4. App streams PPI for 90s (coexists with the trigger's offline recording)
+5. App computes lnRMSSD + resting HR, uploads to Supabase
+6. App disconnects → athlete removes sensor → sensor powers off
+7. Small orphan recording (~60 KB for ~90s) remains on flash
+```
+
+**PPI and offline recording coexist.** Validated on device: PPI online streaming works while HR+ACC+GYRO+MAG record to flash. The trigger recording during morning check is harmless — the orphan files are cleaned up during the next training sync.
+
+### Training Session
+
+```
+1. Athlete puts sensor on bicep → sensor powers on → trigger fires, recording starts
+2. Training proceeds (no phone needed)
+3. Sensor records HR+ACC+GYRO+MAG to flash for entire session
+4. Session ends → athlete opens app → "Sync Training Data"
+5. App connects via BLE
+6. App downloads ALL .REC files from sensor (training + any morning orphans)
+7. App processes HR → TRIMP, zones, session summary
+8. App stores IMU .REC files on phone (for future processing)
+9. App deletes ALL .REC files from sensor → flash freed
+10. App uploads session summary to Supabase
+11. App disconnects
+```
+
+### Flash Storage Budget
+
+```
+Total flash:          14.4 MB
+Per 90-min session:   ~3.4 MB (HR+ACC+GYRO+MAG at 52Hz, measured)
+Morning orphan:       ~60 KB (HR+ACC+GYRO+MAG for ~90 seconds)
+Capacity:             ~4 full sessions before sync required
+```
+
+**Sync after every training session** is the operational requirement. With ~3.4 MB/session and 14.4 MB total, there's room for ~4 sessions, but syncing after each session is simpler and prevents data loss.
+
+**Memory limit 2 (300 KB remaining):** If flash fills up, the sensor auto-stops all recordings and disables triggers. The athlete would need to sync to free space before the next session. The app should warn if free space is low after sync.
+
+### Failure Modes
+
+| Scenario | Impact | Mitigation |
+|----------|--------|------------|
+| Athlete forgets to sync for 4+ sessions | Flash fills up, recordings stop | App notification: "Sync soon — X sessions unsaved" |
+| Battery dies mid-session | Partial recording on flash | Session pipeline handles short recordings — TRIMP computed from available HR |
+| Sensor not found during morning check | No PPI data | "Make sure your sensor is on" after 10s timeout |
+| Trigger not configured | No auto-recording | App checks trigger status on connect, offers to configure if disabled |
+| Orphan files accumulate | Wastes ~60 KB each | Cleaned up on every training sync — negligible impact |
+
+### Sensor Status Checks
+
+The app performs these checks on each BLE connection:
+
+```
+1. Battery level — warn athlete if < 20%
+2. Disk space — warn if < 2 MB free (approaching memory limit 1)
+3. Recording status — show if recordings are active
+4. Trigger configuration — verify trigger is system-start with correct types
+```
+
+---
+
+## 12. Processing Pipeline (Rust Core)
 
 ### Morning Check Pipeline
 
@@ -654,20 +779,15 @@ Input: Vec<PpiSample> from 90s BLE stream
 
 Steps:
   1. Discard warmup: drop all samples from first 25 seconds (error_estimate typically 30+)
-  2. Quality filter: drop samples with error_estimate > 30
-  3. Blocker filter: drop samples where flags bit 0 is set (motion detected)
-  4. Range filter: drop RR < 300ms or > 2000ms
-  5. Ectopic detection: flag if |RR[i] - RR[i-1]| > 0.20 * mean(RR[i-2..i+2])
-  6. Interpolate ectopic beats (linear interpolation from neighbors)
-  7. If valid_count < 30 → return Error("insufficient data quality")
-  8. If artifact_percent > 20% → return Error("too many artifacts, try again")
-  9. Compute RMSSD, lnRMSSD, mean_RR, resting_HR
- 10. Load athlete baseline from local storage (60-day expanding window)
- 11. Compute readiness score (green/amber/red) — skip if < 7 days of data
- 12. Update local baseline
- 13. Upload to Supabase
- 14. Return MorningReadiness struct
+  2. If valid_count < 30 → return Error("not enough data, stay still and try again")
+  3. Compute RMSSD, lnRMSSD, mean_RR, resting_HR
+  4. Load athlete baseline from local storage (60-day expanding window)
+  5. Compute readiness score (green/amber/red) — skip if < 7 days of data
+  6. Update local baseline
+  7. Upload to Supabase
+  8. Return MorningReadiness struct
 
+PPI data at rest is clean — no RR filtering or artifact rejection needed.
 Validated: 90s stream → ~47-81 raw samples → ~39-60 clean samples after warmup discard.
 lnRMSSD repeatability: within 0.04 across consecutive measurements.
 ```
@@ -675,25 +795,31 @@ lnRMSSD repeatability: within 0.04 across consecutive measurements.
 ### Session Pipeline
 
 ```
-Input: OfflineRecording (parsed .REC file with HR + PPI frames)
+Input: Downloaded .REC files from sensor (HR + ACC + GYRO + MAG)
 
 Steps:
-  1. Extract HR time series from HR frames (bpm values)
+  1. Parse HR.REC → extract HR time series (bpm values)
   2. Load athlete config (hr_max, hr_rest, zones)
   3. Classify each HR sample into zone
   4. Accumulate time per zone
   5. Compute Edwards TRIMP
   6. Compute HR stats (avg, max, min)
-  7. Return SessionSummary struct
+  7. Upload SessionSummary to Supabase
+  8. Delete .REC files from sensor (free flash for next session)
+  9. Return SessionSummary struct
+
+IMU files (ACC, GYRO, MAG .REC) are downloaded but not parsed in V1.
+Kept on phone local storage for future processing pipeline.
+Deleted from sensor after download to free flash space.
 ```
 
 ---
 
-## 12. Out of Scope (V1)
+## 13. Out of Scope (V1)
 
 | Feature | Why deferred |
 |---------|-------------|
-| ACC/GYRO player load | Valuable but independent workstream. HR-based load is sufficient for V1. |
+| ACC/GYRO player load processing | IMU data is recorded to flash during training but not processed in V1. Processing pipeline (sprint detection, player load, movement classification) is a separate workstream. |
 | Live session monitoring | Requires persistent BLE connection during training. Conflicts with offline recording simplicity. |
 | PPG analysis (SpO2, respiratory rate) | Needs channel wavelength validation, calibration work. |
 | Sprint / movement detection | Requires ACC, custom algorithms, validation. |
@@ -704,7 +830,7 @@ Steps:
 
 ---
 
-## 13. Success Criteria
+## 14. Success Criteria
 
 | Metric | Target |
 |--------|--------|
@@ -719,7 +845,7 @@ Steps:
 
 ---
 
-## 14. Resolved Decisions
+## 15. Resolved Decisions
 
 | # | Question | Decision | Rationale |
 |---|----------|----------|-----------|
@@ -728,17 +854,14 @@ Steps:
 | 4 | Dashboard technology? | **Flutter Web with kine_charts.** | Shares codebase, design system, and charting library with the mobile app. Avoids maintaining two UI frameworks. kine_charts already handles line, bar, and scatter charts needed for trends. |
 | 5 | Sensor sharing? | **1:1 sensor-athlete binding. No sharing.** | Each athlete is assigned a sensor by serial ID. Simplifies data pipeline — sensor ID in recording maps directly to athlete. Avoids complex multi-user per-device logic. |
 | 6 | Minimum baseline period? | **7 days preliminary, 14 days confident.** | Days 1-6: show raw values, no traffic light ("Building baseline: X/7 days"). Days 7-13: preliminary traffic light with caveat marker. Day 14+: full confident scoring. 60-day expanding window for long-term reference. Based on Plews et al. (2012), WHOOP (4-day start, 30-day full), HRV4Training (7-day rolling + 60-day range). |
-
----
-
-| 1b | PPI streaming validated on device? | **Yes — two successful tests.** | Run 1 (90s): 81 samples, lnRMSSD=5.19, HR=63. Run 2 (60s): 47 samples, lnRMSSD=5.15, HR=59. Repeatability within 0.04 lnRMSSD. ~16s warmup, first 8 samples noisy (error_estimate 30+), remaining samples clean (error_estimate 6-20). 60s window yields ~40 clean samples after warmup discard. |
-| 2 | HR max for youth athletes? | **Use highest observed HR from first 2 weeks of training.** | 220-age is unreliable for youth. Auto-detect: track max HR per session, set hr_max = highest seen after 2 weeks. Coach can manually override via dashboard. Resting HR auto-updates from lowest 7-day morning reading average. |
 | 7 | Supabase pricing? | **Free tier is sufficient for years.** | 30 athletes x 365 days x ~1KB = ~11MB/year. Free tier = 500MB DB = ~45 years of headroom. Pro ($25/mo) only needed if adding file storage or exceeding 50K monthly active users. Non-issue for V1. |
-| 8 | PPI during training sessions? | **Record HR only for V1 sessions. Skip PPI during training.** | Session TRIMP and HR zones use HR bpm, not PPI. PPI quality during high-intensity movement is uncertain (blocker flag). Morning PPI at rest is validated and sufficient for readiness metrics. Training PPI can be added in V2 after on-field quality testing. |
+| 8 | What to record during training? | **HR + full IMU (ACC, GYRO, MAG). Skip PPI.** | HR is processed in V1 for TRIMP and zones. IMU (ACC+GYRO+MAG at 52Hz, no SDK mode) is recorded to flash for future sprint/load analysis — not processed in V1 but available when pipeline is ready. PPI skipped during training: quality during high-intensity movement is uncertain (blocker flag), and morning PPI at rest is sufficient for readiness metrics. ~3.4 MB per 90-min session (measured). |
+| 9 | PPI streaming validated on device? | **Yes — two successful tests.** | Run 1 (90s): 81 samples, lnRMSSD=5.19, HR=63. Run 2 (60s): 47 samples, lnRMSSD=5.15, HR=59. Repeatability within 0.04 lnRMSSD. ~16s warmup, first 8 samples noisy (error_estimate 30+), remaining samples clean (error_estimate 6-20). 60s window yields ~40 clean samples after warmup discard. |
+| 10 | HR max for youth athletes? | **Use highest observed HR from first 2 weeks of training.** | 220-age is unreliable for youth. Auto-detect: track max HR per session, set hr_max = highest seen after 2 weeks. Coach can manually override via dashboard. Resting HR auto-updates from lowest 7-day morning reading average. |
 
 ---
 
-## 15. Open Questions
+## 16. Open Questions
 
 No blocking open questions remain for V1 development.
 
