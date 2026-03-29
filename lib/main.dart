@@ -42,11 +42,17 @@ class PolarApp extends StatelessWidget {
         return MaterialApp.router(
           title: 'KINE',
           debugShowCheckedModeBanner: false,
-          themeMode: appTheme == AppTheme.kineFlow
-              ? ThemeMode.light
-              : ThemeMode.dark,
-          theme: _kineFlowTheme(),
-          darkTheme: _kineDarkTheme(),
+          themeMode: switch (appTheme) {
+            AppTheme.kineFlow => ThemeMode.light,
+            AppTheme.dark     => ThemeMode.dark,
+            AppTheme.kineApp  => ThemeMode.system,
+          },
+          theme: appTheme == AppTheme.kineApp
+              ? _kineAppLightTheme()
+              : _kineFlowTheme(),
+          darkTheme: appTheme == AppTheme.kineApp
+              ? _kineAppDarkTheme()
+              : _kineDarkTheme(),
           routerConfig: appRouter,
         );
       },
@@ -55,6 +61,149 @@ class PolarApp extends StatelessWidget {
 }
 
 // ── Theme builders ───────────────────────────────────────────────
+
+ThemeData _kineAppLightTheme() => ThemeData(
+      brightness: Brightness.light,
+      useMaterial3: true,
+      colorScheme: ColorScheme.light(
+        primary: KineColors.blue3,
+        onPrimary: Colors.white,
+        secondary: KineColors.gray4,
+        onSecondary: Colors.white,
+        surface: Colors.white,
+        onSurface: KineColors.gray6,
+        surfaceContainerHighest: KineColors.gray0,
+        error: KineColors.red3,
+        onError: Colors.white,
+      ),
+      scaffoldBackgroundColor: Colors.white,
+      extensions: [KineColors.light, KineTypography.web],
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: KineColors.blue3,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(KineRadius.md),
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: KineColors.gray6,
+          side: const BorderSide(color: KineColors.gray1),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(KineRadius.md),
+          ),
+        ),
+      ),
+      appBarTheme: AppBarTheme(
+        backgroundColor: Colors.white,
+        foregroundColor: KineColors.gray6,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        shape: const Border(
+          bottom: BorderSide(color: KineColors.gray1, width: 0.5),
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: Colors.white,
+        indicatorColor: KineColors.blue3.withValues(alpha: 0.12),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 12,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+            color: selected ? KineColors.blue3 : KineColors.gray3,
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(
+            color: selected ? KineColors.blue3 : KineColors.gray3,
+          );
+        }),
+      ),
+      cardTheme: CardThemeData(
+        color: KineColors.gray0,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(KineRadius.lg),
+          side: const BorderSide(color: KineColors.gray1, width: 0.5),
+        ),
+      ),
+    );
+
+ThemeData _kineAppDarkTheme() => ThemeData(
+      brightness: Brightness.dark,
+      useMaterial3: true,
+      colorScheme: ColorScheme.dark(
+        primary: KineColors.blue2,
+        onPrimary: Colors.white,
+        secondary: KineColors.gray3,
+        onSecondary: Colors.white,
+        surface: KineColors.gray6,
+        onSurface: KineColors.gray0,
+        surfaceContainerHighest: KineColors.gray5,
+        error: const Color(0xFFFA8985), // red2
+        onError: Colors.white,
+      ),
+      scaffoldBackgroundColor: KineColors.gray6,
+      extensions: [KineColors.appDark, KineTypography.web],
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          backgroundColor: KineColors.blue2,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(KineRadius.md),
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: KineColors.gray0,
+          side: const BorderSide(color: KineColors.gray4),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(KineRadius.md),
+          ),
+        ),
+      ),
+      appBarTheme: AppBarTheme(
+        backgroundColor: KineColors.gray6,
+        foregroundColor: KineColors.gray0,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: Colors.transparent,
+        shape: Border(
+          bottom: BorderSide(color: KineColors.gray4, width: 0.5),
+        ),
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        backgroundColor: KineColors.gray6,
+        indicatorColor: KineColors.blue2.withValues(alpha: 0.15),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return TextStyle(
+            fontSize: 12,
+            color: selected ? KineColors.blue2 : KineColors.gray3,
+          );
+        }),
+        iconTheme: WidgetStateProperty.resolveWith((states) {
+          final selected = states.contains(WidgetState.selected);
+          return IconThemeData(
+            color: selected ? KineColors.blue2 : KineColors.gray3,
+          );
+        }),
+      ),
+      cardTheme: CardThemeData(
+        color: KineColors.gray5,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(KineRadius.lg),
+          side: const BorderSide(color: KineColors.gray4, width: 0.5),
+        ),
+      ),
+    );
 
 ThemeData _kineDarkTheme() => ThemeData(
       brightness: Brightness.dark,

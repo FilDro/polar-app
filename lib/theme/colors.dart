@@ -9,6 +9,7 @@ class KineColors extends ThemeExtension<KineColors> {
   static const gold2 = Color(0xFFFFCF00);
   static const gold3 = Color(0xFFCC9F00);
   static const green2 = Color(0xFF16C47F);
+  static const blue2 = Color(0xFF75A6F6);
   static const blue3 = Color(0xFF3081DD);
   static const yellow0 = Color(0xFFFFD65A);
   static const orange1 = Color(0xFFFF9D23);
@@ -79,6 +80,23 @@ class KineColors extends ThemeExtension<KineColors> {
     required this.warning,
     required this.error,
   });
+
+  // ── App dark theme (warm gray, blue primary) ────────────────
+  static const appDark = KineColors._(
+    surface: gray6,
+    surfaceCard: gray5,
+    surfaceElevated: gray4,
+    surfaceBorder: gray4,
+    textPrimary: gray0,
+    textSecondary: gray1,
+    textMuted: gray3,
+    textDisabled: gray3,
+    primary: blue2,
+    accent: gold2,
+    success: Color(0xFF1EF09D), // green1
+    warning: orange1,
+    error: Color(0xFFFA8985),   // red2
+  );
 
   // ── Light theme (kept as compile-time fallback) ─────────────
   static const light = KineColors._(

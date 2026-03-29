@@ -285,14 +285,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             builder: (context, appTheme, _) => SegmentedButton<AppTheme>(
               segments: const [
                 ButtonSegment(
+                  value: AppTheme.kineApp,
+                  label: Text('KINE'),
+                ),
+                ButtonSegment(
                   value: AppTheme.dark,
-                  label: Text('KINE Dark'),
-                  icon: Icon(Icons.dark_mode),
+                  label: Text('Dark'),
                 ),
                 ButtonSegment(
                   value: AppTheme.kineFlow,
                   label: Text('KineFlow'),
-                  icon: Icon(Icons.light_mode),
                 ),
               ],
               selected: {appTheme},
