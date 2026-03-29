@@ -116,6 +116,21 @@ pub fn baseline_phase(day_count: u32) -> BaselinePhase {
     }
 }
 
+/// Compute the 7-day rolling mean: up to 6 most recent history values plus today.
+///
+/// history is ordered oldest-first (same format as compute_baseline input).
+/// If history has fewer than 6 entries, all available entries are included.
+/// The result is used as the input to score_readiness so that the traffic light
+/// reflects the recent trend rather than reacting to a single-day spike.
+pub fn compute_7day_mean(today: f64, history: &[f64]) -> f64 {
+    // Take the 6 most recent entries from history (newest-last order after rev+take).
+    let tail: Vec<f64> = history.iter().rev().take(6).cloned().collect();
+    // tail is newest-first; reverse to restore chronological order, then append today.
+    let mut window: Vec<f64> = tail.into_iter().rev().collect();
+    window.push(today);
+    window.iter().sum::<f64>() / window.len() as f64
+}
+
 /// Score readiness from today's lnRMSSD against baseline.
 ///
 /// Scoring rules:
@@ -381,5 +396,55 @@ mod tests {
         };
         let result = score_readiness(4.0, &baseline);
         assert_eq!(result.phase, BaselinePhase::Preliminary);
+    }
+
+    // ── compute_7day_mean ──────────────────────────────────────────
+
+    #[test]
+    fn test_7day_mean_no_history() {
+        // No prior history => mean is just today's value.
+        let mean = compute_7day_mean(4.0, &[]);
+        assert_relative_eq!(mean, 4.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_7day_mean_short_history() {
+        // 2 prior values + today = 3-element window.
+        // mean([3.0, 4.0, 5.0]) = 4.0
+        let mean = compute_7day_mean(5.0, &[3.0, 4.0]);
+        assert_relative_eq!(mean, 4.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_7day_mean_full_history() {
+        // Exactly 6 prior values + today = 7-element window.
+        let history = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let mean = compute_7day_mean(7.0, &history);
+        // (1+2+3+4+5+6+7)/7 = 28/7 = 4.0
+        assert_relative_eq!(mean, 4.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_7day_mean_uses_only_last_6() {
+        // 10 prior values; only the most recent 6 should be used.
+        // history = [1,2,3,4,5,6,7,8,9,10], last 6 = [5,6,7,8,9,10], today = 11
+        // mean([5,6,7,8,9,10,11]) = 56/7 = 8.0
+        let history: Vec<f64> = (1..=10).map(|x| x as f64).collect();
+        let mean = compute_7day_mean(11.0, &history);
+        assert_relative_eq!(mean, 8.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_7day_mean_smooths_spike() {
+        // Stable history at 4.0, today spikes to 2.0.
+        // Raw today = 2.0 would fire RED (below mean - 1.5*sd if sd is small).
+        // 7-day mean = (4+4+4+4+4+4+2)/7 ≈ 3.71, which is a smaller drop.
+        let history = [4.0_f64; 6];
+        let mean = compute_7day_mean(2.0, &history);
+        let expected = (6.0 * 4.0 + 2.0) / 7.0;
+        assert_relative_eq!(mean, expected, epsilon = 1e-9);
+        // Confirm it's between today's spike and the stable baseline
+        assert!(mean > 2.0);
+        assert!(mean < 4.0);
     }
 }

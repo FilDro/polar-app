@@ -111,9 +111,13 @@ pub struct PolarMorningCheckState {
 #[derive(Debug, Clone)]
 pub struct PolarMorningResult {
     pub ln_rmssd: f64,
+    /// 7-day rolling mean; this is what drives the traffic light.
+    pub ln_rmssd_7day: f64,
     pub rmssd_ms: f64,
     pub resting_hr_bpm: f64,
     pub rr_count: u32,
+    /// Samples discarded due to the sensor blocker flag (motion detected).
+    pub rejected_count: u32,
     pub readiness: String,
     pub stability: String,
     pub baseline_mean: f64,
@@ -250,9 +254,11 @@ impl From<polar_engine::state::MorningResult> for PolarMorningResult {
     fn from(r: polar_engine::state::MorningResult) -> Self {
         Self {
             ln_rmssd: r.ln_rmssd,
+            ln_rmssd_7day: r.ln_rmssd_7day,
             rmssd_ms: r.rmssd_ms,
             resting_hr_bpm: r.resting_hr_bpm,
             rr_count: r.rr_count as u32,
+            rejected_count: r.rejected_count as u32,
             readiness: r.readiness,
             stability: r.stability,
             baseline_mean: r.baseline_mean,

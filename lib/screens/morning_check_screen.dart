@@ -1,5 +1,7 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../database/database.dart';
 import '../services/ble_service.dart';
 import '../services/morning_service.dart';
 import '../src/rust/api/polar_api.dart' as bridge;
@@ -19,6 +21,7 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
   final _ble = BleService.instance;
   final _morning = MorningCheckService();
   bridge.PolarMorningResult? _computedResult;
+  bool _isComputing = false;
 
   @override
   void initState() {
@@ -48,28 +51,54 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
   void _onMorningChanged() {
     if (mounted) {
       // When the Rust side signals "computing", we compute the result here.
-      if (_morning.phase == 'computing' && _computedResult == null) {
+      // Guard with _isComputing to prevent duplicate calls while the async
+      // DB load is in flight (this listener fires on every poll tick).
+      if (_morning.phase == 'computing' && _computedResult == null && !_isComputing) {
         _computeResult();
       }
       setState(() {});
     }
   }
 
-  void _computeResult() {
+  Future<void> _computeResult() async {
+    _isComputing = true;
     try {
-      // TODO: Load baseline history from DB once Phase 4 is wired up.
-      // For now, pass empty list (will produce "insufficient" baseline).
-      _computedResult = bridge.polarComputeMorningResult(
-        baselineHistory: const [],
-      );
-      setState(() {});
+      final db = AppDatabase.instance;
+      final athlete = await db.getActiveAthlete();
+      final history = athlete != null
+          ? await db.getBaselineHistory(athlete.id)
+          : const <double>[];
+      final result = bridge.polarComputeMorningResult(baselineHistory: history);
+      if (athlete != null) {
+        await _saveResult(athlete.id, result);
+      }
+      if (mounted) setState(() { _computedResult = result; });
     } catch (e) {
       debugPrint('Morning check compute error: $e');
     }
   }
 
+  Future<void> _saveResult(String athleteId, bridge.PolarMorningResult r) async {
+    final today = DateTime.now();
+    await AppDatabase.instance.upsertWellness(
+      DailyWellnessEntriesCompanion(
+        athleteId: Value(athleteId),
+        date: Value(DateTime(today.year, today.month, today.day)),
+        lnRmssd: Value(r.lnRmssd),
+        rmssdMs: Value(r.rmssdMs),
+        restingHr: Value(r.restingHrBpm.round()),
+        readiness: Value(r.readiness),
+        stability: Value(r.stability),
+        rrCount: Value(r.rrCount),
+        dayCount: Value(r.dayCount),
+        baselineMean: Value(r.baselineMean > 0 ? r.baselineMean : null),
+        baselineSd: Value(r.baselineSd > 0 ? r.baselineSd : null),
+        cv7day: Value(r.cv7Day > 0 ? r.cv7Day : null),
+      ),
+    );
+  }
+
   void _onDone() {
-    // TODO: Store result in DB once Phase 4 is wired up
     final result = _computedResult;
     if (result != null) {
       context.pop<Map<String, dynamic>>({
@@ -194,7 +223,7 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
           ),
           const SizedBox(height: KineSpacing.sm),
           Text(
-            'Stabilizing signal',
+            'Lie down. Breathe normally.',
             style: TextStyle(fontSize: 14, color: colors.textMuted),
           ),
           if (hr > 0) ...[
@@ -341,17 +370,15 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
         children: [
           ReadinessIndicator(readiness: result.readiness),
           const SizedBox(height: KineSpacing.lg),
+          // lnRMSSD row: today's raw value + 7-day mean used for the traffic light
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _ResultMetric(
-                  'lnRMSSD', result.lnRmssd.toStringAsFixed(2), colors),
+                  'lnRMSSD (today)', result.lnRmssd.toStringAsFixed(2), colors),
               const SizedBox(width: KineSpacing.xl),
               _ResultMetric(
-                'Resting HR',
-                '${result.restingHrBpm.round()} bpm',
-                colors,
-              ),
+                  'lnRMSSD (7-day)', result.lnRmssd7Day.toStringAsFixed(2), colors),
             ],
           ),
           const SizedBox(height: KineSpacing.sm),
@@ -359,15 +386,27 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _ResultMetric(
-                  'R-R Intervals', '${result.rrCount}', colors),
+                'Resting HR',
+                '${result.restingHrBpm.round()} bpm',
+                colors,
+              ),
               const SizedBox(width: KineSpacing.xl),
               _ResultMetric('Stability', result.stability, colors),
+            ],
+          ),
+          const SizedBox(height: KineSpacing.sm),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _ResultMetric('R-R Intervals', '${result.rrCount}', colors),
+              const SizedBox(width: KineSpacing.xl),
+              _ResultMetric('Baseline', '${result.dayCount} days', colors),
             ],
           ),
           if (result.dayCount > 0) ...[
             const SizedBox(height: KineSpacing.sm),
             Text(
-              'Baseline: ${result.dayCount} days, mean ${result.baselineMean.toStringAsFixed(2)}',
+              'mean ${result.baselineMean.toStringAsFixed(2)}',
               style: TextStyle(fontSize: 12, color: colors.textMuted),
             ),
           ],

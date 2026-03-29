@@ -759,9 +759,11 @@ impl SseDecode for crate::api::polar_api::PolarMorningResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_lnRmssd = <f64>::sse_decode(deserializer);
+        let mut var_lnRmssd7Day = <f64>::sse_decode(deserializer);
         let mut var_rmssdMs = <f64>::sse_decode(deserializer);
         let mut var_restingHrBpm = <f64>::sse_decode(deserializer);
         let mut var_rrCount = <u32>::sse_decode(deserializer);
+        let mut var_rejectedCount = <u32>::sse_decode(deserializer);
         let mut var_readiness = <String>::sse_decode(deserializer);
         let mut var_stability = <String>::sse_decode(deserializer);
         let mut var_baselineMean = <f64>::sse_decode(deserializer);
@@ -770,9 +772,11 @@ impl SseDecode for crate::api::polar_api::PolarMorningResult {
         let mut var_dayCount = <u32>::sse_decode(deserializer);
         return crate::api::polar_api::PolarMorningResult {
             ln_rmssd: var_lnRmssd,
+            ln_rmssd_7day: var_lnRmssd7Day,
             rmssd_ms: var_rmssdMs,
             resting_hr_bpm: var_restingHrBpm,
             rr_count: var_rrCount,
+            rejected_count: var_rejectedCount,
             readiness: var_readiness,
             stability: var_stability,
             baseline_mean: var_baselineMean,
@@ -1062,9 +1066,11 @@ impl flutter_rust_bridge::IntoDart for crate::api::polar_api::PolarMorningResult
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.ln_rmssd.into_into_dart().into_dart(),
+            self.ln_rmssd_7day.into_into_dart().into_dart(),
             self.rmssd_ms.into_into_dart().into_dart(),
             self.resting_hr_bpm.into_into_dart().into_dart(),
             self.rr_count.into_into_dart().into_dart(),
+            self.rejected_count.into_into_dart().into_dart(),
             self.readiness.into_into_dart().into_dart(),
             self.stability.into_into_dart().into_dart(),
             self.baseline_mean.into_into_dart().into_dart(),
@@ -1394,9 +1400,11 @@ impl SseEncode for crate::api::polar_api::PolarMorningResult {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <f64>::sse_encode(self.ln_rmssd, serializer);
+        <f64>::sse_encode(self.ln_rmssd_7day, serializer);
         <f64>::sse_encode(self.rmssd_ms, serializer);
         <f64>::sse_encode(self.resting_hr_bpm, serializer);
         <u32>::sse_encode(self.rr_count, serializer);
+        <u32>::sse_encode(self.rejected_count, serializer);
         <String>::sse_encode(self.readiness, serializer);
         <String>::sse_encode(self.stability, serializer);
         <f64>::sse_encode(self.baseline_mean, serializer);
@@ -1685,9 +1693,11 @@ mod io {
         fn cst_decode(self) -> crate::api::polar_api::PolarMorningResult {
             crate::api::polar_api::PolarMorningResult {
                 ln_rmssd: self.ln_rmssd.cst_decode(),
+                ln_rmssd_7day: self.ln_rmssd_7day.cst_decode(),
                 rmssd_ms: self.rmssd_ms.cst_decode(),
                 resting_hr_bpm: self.resting_hr_bpm.cst_decode(),
                 rr_count: self.rr_count.cst_decode(),
+                rejected_count: self.rejected_count.cst_decode(),
                 readiness: self.readiness.cst_decode(),
                 stability: self.stability.cst_decode(),
                 baseline_mean: self.baseline_mean.cst_decode(),
@@ -1843,9 +1853,11 @@ mod io {
         fn new_with_null_ptr() -> Self {
             Self {
                 ln_rmssd: Default::default(),
+                ln_rmssd_7day: Default::default(),
                 rmssd_ms: Default::default(),
                 resting_hr_bpm: Default::default(),
                 rr_count: Default::default(),
+                rejected_count: Default::default(),
                 readiness: core::ptr::null_mut(),
                 stability: core::ptr::null_mut(),
                 baseline_mean: Default::default(),
@@ -2284,9 +2296,11 @@ mod io {
     #[derive(Clone, Copy)]
     pub struct wire_cst_polar_morning_result {
         ln_rmssd: f64,
+        ln_rmssd_7day: f64,
         rmssd_ms: f64,
         resting_hr_bpm: f64,
         rr_count: u32,
+        rejected_count: u32,
         readiness: *mut wire_cst_list_prim_u_8_strict,
         stability: *mut wire_cst_list_prim_u_8_strict,
         baseline_mean: f64,
@@ -2566,21 +2580,23 @@ mod web {
                 .unwrap();
             assert_eq!(
                 self_.length(),
-                10,
-                "Expected 10 elements, got {}",
+                12,
+                "Expected 12 elements, got {}",
                 self_.length()
             );
             crate::api::polar_api::PolarMorningResult {
                 ln_rmssd: self_.get(0).cst_decode(),
-                rmssd_ms: self_.get(1).cst_decode(),
-                resting_hr_bpm: self_.get(2).cst_decode(),
-                rr_count: self_.get(3).cst_decode(),
-                readiness: self_.get(4).cst_decode(),
-                stability: self_.get(5).cst_decode(),
-                baseline_mean: self_.get(6).cst_decode(),
-                baseline_sd: self_.get(7).cst_decode(),
-                cv_7day: self_.get(8).cst_decode(),
-                day_count: self_.get(9).cst_decode(),
+                ln_rmssd_7day: self_.get(1).cst_decode(),
+                rmssd_ms: self_.get(2).cst_decode(),
+                resting_hr_bpm: self_.get(3).cst_decode(),
+                rr_count: self_.get(4).cst_decode(),
+                rejected_count: self_.get(5).cst_decode(),
+                readiness: self_.get(6).cst_decode(),
+                stability: self_.get(7).cst_decode(),
+                baseline_mean: self_.get(8).cst_decode(),
+                baseline_sd: self_.get(9).cst_decode(),
+                cv_7day: self_.get(10).cst_decode(),
+                day_count: self_.get(11).cst_decode(),
             }
         }
     }

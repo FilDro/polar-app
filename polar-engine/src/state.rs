@@ -234,9 +234,13 @@ impl Default for MorningCheckSnapshot {
 #[derive(Debug, Clone)]
 pub struct MorningResult {
     pub ln_rmssd: f64,
+    /// 7-day rolling mean (last 6 history values + today). Used for the traffic light.
+    pub ln_rmssd_7day: f64,
     pub rmssd_ms: f64,
     pub resting_hr_bpm: f64,
     pub rr_count: usize,
+    /// Number of PPI samples discarded due to the blocker flag.
+    pub rejected_count: usize,
     pub readiness: String,
     pub stability: String,
     pub baseline_mean: f64,
@@ -249,9 +253,11 @@ impl Default for MorningResult {
     fn default() -> Self {
         Self {
             ln_rmssd: 0.0,
+            ln_rmssd_7day: 0.0,
             rmssd_ms: 0.0,
             resting_hr_bpm: 0.0,
             rr_count: 0,
+            rejected_count: 0,
             readiness: String::new(),
             stability: String::new(),
             baseline_mean: 0.0,

@@ -163,7 +163,7 @@ impl PolarSession {
     /// baseline_history: vec of historical lnRMSSD values (up to 60 days, excluding today).
     pub fn compute_morning_result(&mut self, baseline_history: &[f64]) -> MorningResult {
         use polar_core::hrv::{PpiInput, compute_hrv};
-        use polar_core::scoring::{compute_baseline, score_readiness, baseline_phase, BaselinePhase};
+        use polar_core::scoring::{compute_baseline, compute_7day_mean, score_readiness, baseline_phase, BaselinePhase};
 
         // Convert PpiSamples to PpiInputs
         let inputs: Vec<PpiInput> = self.morning_ppi_buffer.iter().map(|s| PpiInput {
@@ -186,10 +186,13 @@ impl PolarSession {
             }
         };
 
-        // Compute baseline and scoring
+        // Compute baseline and scoring.
+        // Use the 7-day rolling mean as the decision input so the traffic light reflects
+        // the recent trend rather than reacting to a single-day spike (Esco et al. 2025).
         let baseline = compute_baseline(baseline_history);
         let phase = baseline_phase(baseline.day_count);
-        let scoring = score_readiness(hrv.ln_rmssd, &baseline);
+        let ln_rmssd_7day = compute_7day_mean(hrv.ln_rmssd, baseline_history);
+        let scoring = score_readiness(ln_rmssd_7day, &baseline);
 
         let readiness_str = match scoring.readiness {
             polar_core::scoring::Readiness::Green => "green",
@@ -211,9 +214,11 @@ impl PolarSession {
 
         let result = MorningResult {
             ln_rmssd: hrv.ln_rmssd,
+            ln_rmssd_7day,
             rmssd_ms: hrv.rmssd_ms,
             resting_hr_bpm: hrv.resting_hr_bpm,
             rr_count: hrv.rr_count,
+            rejected_count: hrv.rejected_count,
             readiness: readiness_str.to_string(),
             stability: stability_str.to_string(),
             baseline_mean: scoring.baseline.mean,

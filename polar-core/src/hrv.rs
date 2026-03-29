@@ -15,6 +15,8 @@ pub struct HrvResult {
     pub rr_mean_ms: f64,
     pub rr_count: usize,
     pub resting_hr_bpm: f64,
+    /// Number of samples discarded due to the blocker flag (flags & 0x01).
+    pub rejected_count: usize,
 }
 
 /// Errors during HRV computation.
@@ -53,13 +55,22 @@ const MIN_SAMPLES: usize = 30;
 pub fn compute_hrv(samples: &[PpiInput], warmup_s: f64) -> Result<HrvResult, HrvError> {
     let warmup_ms = warmup_s * 1000.0;
 
-    // Phase 1: skip warmup by accumulating elapsed time
+    // Phase 1: skip warmup by accumulating elapsed time; reject blocker-flagged samples.
+    // Bit 0 of flags (flags & 0x01) is the blocker flag: set when motion was detected
+    // during acquisition. See Polar BLE SDK PPIData.md and PpiDataTest.kt.
+    // Elapsed time accumulates even for rejected samples — we track real time, not
+    // valid-beat time — so the warmup window is computed correctly.
     let mut elapsed_ms: f64 = 0.0;
     let mut rr_intervals: Vec<f64> = Vec::new();
+    let mut rejected_count: usize = 0;
 
     for sample in samples {
         elapsed_ms += sample.ppi_ms as f64;
         if elapsed_ms < warmup_ms {
+            continue;
+        }
+        if sample.flags & 0x01 != 0 {
+            rejected_count += 1;
             continue;
         }
         rr_intervals.push(sample.ppi_ms as f64);
@@ -103,6 +114,7 @@ pub fn compute_hrv(samples: &[PpiInput], warmup_s: f64) -> Result<HrvResult, Hrv
         rr_mean_ms,
         rr_count: rr_intervals.len(),
         resting_hr_bpm,
+        rejected_count,
     })
 }
 
@@ -111,13 +123,23 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
 
-    /// Helper: create a PpiInput with default hr/error_estimate/flags.
+    /// Helper: create a PpiInput with clean flags (no blocker).
     fn ppi(ms: u16) -> PpiInput {
         PpiInput {
             hr: 60,
             ppi_ms: ms,
             error_estimate: 5,
             flags: 0,
+        }
+    }
+
+    /// Helper: create a PpiInput with the blocker flag set (flags & 0x01).
+    fn ppi_blocked(ms: u16) -> PpiInput {
+        PpiInput {
+            hr: 60,
+            ppi_ms: ms,
+            error_estimate: 50,
+            flags: 0x01,
         }
     }
 
@@ -257,5 +279,56 @@ mod tests {
         let samples: Vec<PpiInput> = vec![ppi(800); 35];
         let result = compute_hrv(&samples, 0.0).unwrap();
         assert_relative_eq!(result.resting_hr_bpm, 75.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_blocker_flag_rejected() {
+        // 35 clean samples + 10 blocked samples.
+        // Blocked samples must not contribute to RMSSD or rr_count.
+        let mut samples: Vec<PpiInput> = vec![ppi(1000); 35];
+        samples.extend(vec![ppi_blocked(500); 10]);
+        let result = compute_hrv(&samples, 0.0).unwrap();
+        assert_eq!(result.rr_count, 35);
+        assert_eq!(result.rejected_count, 10);
+        // All clean samples are 1000ms => all successive diffs = 0 => RMSSD = 0
+        assert_relative_eq!(result.rmssd_ms, 0.0, epsilon = 1e-9);
+        assert_relative_eq!(result.rr_mean_ms, 1000.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_clean_flag_accepted() {
+        // flags=0x00 (no blocker) => accepted as normal
+        let samples: Vec<PpiInput> = vec![ppi(1000); 35];
+        let result = compute_hrv(&samples, 0.0).unwrap();
+        assert_eq!(result.rejected_count, 0);
+        assert_eq!(result.rr_count, 35);
+    }
+
+    #[test]
+    fn test_mixed_flags_rmssd_from_clean_only() {
+        // 35 clean samples at 1000ms interspersed with 10 blocked at 800ms.
+        // Only the 35 clean samples are kept => RMSSD=0, rr_mean=1000ms.
+        let mut samples: Vec<PpiInput> = Vec::new();
+        for i in 0..35 {
+            samples.push(ppi(1000));
+            if i < 10 {
+                samples.push(ppi_blocked(800));
+            }
+        }
+        let result = compute_hrv(&samples, 0.0).unwrap();
+        assert_eq!(result.rr_count, 35);
+        assert_eq!(result.rejected_count, 10);
+        assert_relative_eq!(result.rmssd_ms, 0.0, epsilon = 1e-9);
+        assert_relative_eq!(result.rr_mean_ms, 1000.0, epsilon = 1e-9);
+    }
+
+    #[test]
+    fn test_all_blocked_returns_no_valid_intervals() {
+        // 40 samples all with blocker set => rr_intervals is empty => NoValidIntervals.
+        // (The NotEnoughSamples path is only reached when at least 1 clean sample exists
+        // but the count is below MIN_SAMPLES.)
+        let samples: Vec<PpiInput> = vec![ppi_blocked(1000); 40];
+        let result = compute_hrv(&samples, 0.0);
+        assert!(matches!(result, Err(HrvError::NoValidIntervals)));
     }
 }
