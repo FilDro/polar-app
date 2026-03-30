@@ -126,6 +126,14 @@ pub struct DownloadedCsv {
     pub csv_content: String,
 }
 
+/// Device management operations state snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct DeviceOpsSnapshot {
+    pub is_busy: bool,
+    pub progress_text: String,
+    pub error: String,
+}
+
 impl Default for ConnectionSnapshot {
     fn default() -> Self {
         Self {

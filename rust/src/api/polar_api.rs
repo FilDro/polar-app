@@ -139,6 +139,14 @@ pub struct PolarSessionSummary {
     pub zone_percent: Vec<f64>,
 }
 
+#[flutter_rust_bridge::frb]
+#[derive(Debug, Clone)]
+pub struct PolarDeviceOpsState {
+    pub is_busy: bool,
+    pub progress_text: String,
+    pub error: String,
+}
+
 // ── Type conversions ────────────────────────────────────────────
 
 impl From<polar_engine::state::ScannedDevice> for PolarScannedDevice {
@@ -265,6 +273,16 @@ impl From<polar_engine::state::MorningResult> for PolarMorningResult {
             baseline_sd: r.baseline_sd,
             cv_7day: r.cv_7day,
             day_count: r.day_count,
+        }
+    }
+}
+
+impl From<polar_engine::state::DeviceOpsSnapshot> for PolarDeviceOpsState {
+    fn from(s: polar_engine::state::DeviceOpsSnapshot) -> Self {
+        Self {
+            is_busy: s.is_busy,
+            progress_text: s.progress_text,
+            error: s.error,
         }
     }
 }
@@ -424,5 +442,54 @@ pub fn polar_compute_morning_result(baseline_history: Vec<f64>) -> PolarMorningR
     with_session(|s| {
         let result = s.compute_morning_result(&baseline_history);
         PolarMorningResult::from(result)
+    })
+}
+
+// ── Device Ops API ──────────────────────────────────────────────
+
+/// Configure trigger mode AND per-type recording settings (two-step setup).
+/// types: ["acc", "gyro", "mag", "hr", "ppi"]
+/// mode: "system-start", "exercise-start", or "disabled"
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_setup_trigger(mode: String, types: Vec<String>) {
+    with_session(|s| s.setup_trigger(&mode, types));
+}
+
+/// Manually sync device clock to host UTC time.
+/// Also called automatically on every connect.
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_sync_time() {
+    with_session(|s| s.sync_time());
+}
+
+/// Soft-reboot the device. Data is preserved. BLE connection will drop.
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_device_restart() {
+    with_session(|s| s.device_restart());
+}
+
+/// Factory reset the device. Erases all data. BLE connection will drop.
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_device_factory_reset() {
+    with_session(|s| s.device_factory_reset());
+}
+
+/// Delete all recording date folders from device flash (frees storage).
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_delete_all_recordings() {
+    with_session(|s| s.delete_all_recordings());
+}
+
+/// Delete telemetry trace files (TRC*.BIN) from device root.
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_delete_telemetry() {
+    with_session(|s| s.delete_telemetry());
+}
+
+#[flutter_rust_bridge::frb(sync)]
+pub fn polar_poll_device_ops() -> PolarDeviceOpsState {
+    with_session(|s| {
+        s.process_events();
+        s.device_ops_snapshot().into()
     })
 }

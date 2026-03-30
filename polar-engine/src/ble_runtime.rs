@@ -9,6 +9,7 @@ use std::time::Duration;
 use polar_rs::ble::connection::PolarPeripheral;
 use polar_rs::ble::scanner;
 use polar_rs::ble::uuids;
+use polar_rs::offline::cleanup;
 use polar_rs::offline::download::download_recording;
 use polar_rs::offline::listing;
 use polar_rs::offline::workflow;
@@ -47,6 +48,13 @@ pub enum BleCommand {
     // Morning check
     StartMorningCheck,
     StopMorningCheck,
+    // Device ops
+    SetupTrigger { mode: String, types: Vec<String> },
+    SyncTime,
+    DeviceRestart,
+    DeviceFactoryReset,
+    DeleteAllRecordings,
+    DeleteTelemetry,
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +151,9 @@ pub enum BleEvent {
         samples: Vec<PpiSample>,
     },
     MorningCheckError(String),
+    // Device ops
+    DeviceOpsProgress(String),
+    DeviceOpsComplete(String),
 }
 
 /// The BLE runtime handle. Lives on the main thread.
@@ -238,6 +249,8 @@ async fn ble_runtime_loop(
             BleCommand::ReadDeviceInfo => {
                 if let Some(ref p) = peripheral {
                     handle_device_info(p, &event_tx).await;
+                    // Auto-sync device clock on every connect
+                    handle_sync_time(p, &event_tx).await;
                 }
             }
             BleCommand::StartStream { config } => {
@@ -294,6 +307,38 @@ async fn ble_runtime_loop(
             BleCommand::StopMorningCheck => {
                 // Morning check loop checks for this via cmd_rx
             }
+            BleCommand::SetupTrigger { mode, types } => {
+                if let Some(ref p) = peripheral {
+                    handle_setup_trigger(p, &mode, &types, &event_tx).await;
+                }
+            }
+            BleCommand::SyncTime => {
+                if let Some(ref p) = peripheral {
+                    handle_sync_time(p, &event_tx).await;
+                }
+            }
+            BleCommand::DeviceRestart => {
+                if let Some(ref p) = peripheral {
+                    handle_device_restart(p, &event_tx).await;
+                    peripheral = None;
+                }
+            }
+            BleCommand::DeviceFactoryReset => {
+                if let Some(ref p) = peripheral {
+                    handle_device_factory_reset(p, &event_tx).await;
+                    peripheral = None;
+                }
+            }
+            BleCommand::DeleteAllRecordings => {
+                if let Some(ref p) = peripheral {
+                    handle_delete_all_recordings(p, &event_tx).await;
+                }
+            }
+            BleCommand::DeleteTelemetry => {
+                if let Some(ref p) = peripheral {
+                    handle_delete_telemetry(p, &event_tx).await;
+                }
+            }
         }
     }
 }
@@ -328,7 +373,7 @@ async fn handle_scan(event_tx: &mpsc::Sender<BleEvent>, duration_s: u64) {
 
 async fn handle_connect(identifier: &str) -> Result<PolarPeripheral, Box<dyn std::error::Error + Send + Sync>> {
     let device = scanner::find_device(identifier, Duration::from_secs(10)).await?;
-    let peripheral = PolarPeripheral::connect(device.peripheral).await?;
+    let peripheral = PolarPeripheral::connect(device.peripheral, device.adapter).await?;
     // Enable PFTP notifications for file operations
     let _ = peripheral.enable_notifications(uuids::PFTP_MTU).await;
     let _ = peripheral.enable_notifications(uuids::PFTP_D2H).await;
@@ -803,7 +848,8 @@ async fn handle_recording_status(
             let mut active = Vec::new();
             if data.len() > 4 && data[3] == 0 {
                 for &byte in &data[4..] {
-                    match byte {
+                    // Strip bit 7 (offline recording bit) before matching type ID
+                    match byte & 0x7F {
                         0x02 => active.push("acc".to_string()),
                         0x05 => active.push("gyro".to_string()),
                         0x06 => active.push("mag".to_string()),
@@ -899,6 +945,11 @@ async fn handle_sync_files(
                     sample_count: recording.sample_count() as u64,
                     csv_content: csv,
                 }));
+
+                // Delete the downloaded file from sensor flash
+                if let Err(e) = pftp.remove(&entry.path).await {
+                    tracing::warn!("Failed to delete {}: {}", entry.path, e);
+                }
             }
             Err(e) => {
                 let _ = event_tx.send(BleEvent::Error(format!(
@@ -907,6 +958,17 @@ async fn handle_sync_files(
                 )));
             }
         }
+    }
+
+    // Remove now-empty session directories (e.g. /U/0/YYYYMMDD/R/HHMMSS)
+    let mut session_dirs = std::collections::HashSet::new();
+    for entry in &entries {
+        if let Some(dir) = entry.path.rsplitn(2, '/').nth(1) {
+            session_dirs.insert(dir.to_string());
+        }
+    }
+    for dir in &session_dirs {
+        let _ = pftp.remove(dir).await; // fails gracefully if still has files
     }
 
     let _ = pftp.stop_sync().await;
@@ -964,6 +1026,155 @@ async fn handle_get_trigger(
         }
         Err(e) => {
             let _ = event_tx.send(BleEvent::Error(format!("Get trigger failed: {}", e)));
+        }
+    }
+}
+
+async fn handle_setup_trigger(
+    p: &PolarPeripheral,
+    mode: &str,
+    types: &[String],
+    event_tx: &mpsc::Sender<BleEvent>,
+) {
+    use polar_rs::ble::transport::{BleTransport, WriteType};
+
+    let _ = p.enable_notifications(uuids::PMD_CP).await;
+
+    // Step 1: CP 0x09 — set trigger settings for each type individually
+    for type_str in types {
+        let cmd = match type_str.to_lowercase().as_str() {
+            "acc" => Some(commands::build_set_offline_trigger_setting_enabled(
+                MeasurementType::Acc, 52, 16, 8, 3,
+            )),
+            "gyro" => Some(commands::build_set_offline_trigger_setting_enabled(
+                MeasurementType::Gyro, 52, 16, 2000, 3,
+            )),
+            "mag" | "magnetometer" => Some(commands::build_set_offline_trigger_setting_enabled(
+                MeasurementType::Magnetometer, 50, 16, 50, 3,
+            )),
+            "hr" => Some(commands::build_set_offline_trigger_setting_enabled_no_settings(
+                MeasurementType::OfflineHr,
+            )),
+            "ppi" => Some(commands::build_set_offline_trigger_setting_enabled_no_settings(
+                MeasurementType::Ppi,
+            )),
+            _ => None,
+        };
+        if let Some(cmd) = cmd {
+            if let Err(e) = p.write(uuids::PMD_CP, &cmd, WriteType::WithResponse).await {
+                let _ = event_tx.send(BleEvent::Error(format!(
+                    "Trigger settings failed for {}: {}", type_str, e
+                )));
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    // Step 2: CP 0x08 — set trigger mode
+    let trigger_mode = match workflow::TriggerMode::from_str(mode) {
+        Some(m) => m,
+        None => {
+            let _ = event_tx.send(BleEvent::Error(format!("Unknown trigger mode: {}", mode)));
+            return;
+        }
+    };
+    match workflow::set_trigger(p, trigger_mode).await {
+        Ok(()) => { let _ = event_tx.send(BleEvent::TriggerSet(mode.to_string())); }
+        Err(e) => { let _ = event_tx.send(BleEvent::Error(format!("Set trigger mode failed: {}", e))); }
+    }
+}
+
+async fn handle_sync_time(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let pftp = PftpClient::new(p);
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let tod = now % 86400;
+    let (year, month, day) = days_to_ymd(now / 86400);
+    match pftp.set_local_time(year, month, day, (tod / 3600) as u32, ((tod % 3600) / 60) as u32, (tod % 60) as u32).await {
+        Ok(()) => {
+            let _ = event_tx.send(BleEvent::DeviceOpsProgress(
+                format!("Clock synced {:04}-{:02}-{:02}", year, month, day)
+            ));
+        }
+        Err(e) => {
+            tracing::warn!("Time sync failed (non-fatal): {}", e);
+        }
+    }
+}
+
+/// Convert days since Unix epoch (1970-01-01) to (year, month, day) UTC.
+/// Uses Hinnant's algorithm: https://howardhinnant.github.io/date_algorithms.html
+fn days_to_ymd(days: u64) -> (u32, u32, u32) {
+    let z = days as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as u32, m as u32, d as u32)
+}
+
+async fn handle_device_restart(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
+    let pftp = PftpClient::new(p);
+    let _ = event_tx.send(BleEvent::DeviceOpsProgress("Restarting device...".into()));
+    match pftp.restart().await {
+        Ok(()) => {
+            let _ = event_tx.send(BleEvent::DeviceOpsComplete("Device restarting".into()));
+            let _ = event_tx.send(BleEvent::Disconnected);
+        }
+        Err(e) => { let _ = event_tx.send(BleEvent::Error(format!("Restart failed: {}", e))); }
+    }
+}
+
+async fn handle_device_factory_reset(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
+    let pftp = PftpClient::new(p);
+    let _ = event_tx.send(BleEvent::DeviceOpsProgress("Factory resetting...".into()));
+    match pftp.factory_reset().await {
+        Ok(()) => {
+            let _ = event_tx.send(BleEvent::DeviceOpsComplete("Factory reset sent".into()));
+            let _ = event_tx.send(BleEvent::Disconnected);
+        }
+        Err(e) => { let _ = event_tx.send(BleEvent::Error(format!("Factory reset failed: {}", e))); }
+    }
+}
+
+async fn handle_delete_all_recordings(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
+    let pftp = PftpClient::new(p);
+    let _ = event_tx.send(BleEvent::DeviceOpsProgress("Deleting all recordings...".into()));
+    if let Err(e) = pftp.start_sync().await {
+        let _ = event_tx.send(BleEvent::Error(format!("Sync start failed: {}", e)));
+        return;
+    }
+    match cleanup::delete_date_folders(&pftp, "00000000", "99999999").await {
+        Ok(deleted) => {
+            let _ = pftp.stop_sync().await;
+            let _ = event_tx.send(BleEvent::DeviceOpsComplete(
+                format!("Deleted {} date folder(s)", deleted.len())
+            ));
+        }
+        Err(e) => {
+            let _ = pftp.stop_sync().await;
+            let _ = event_tx.send(BleEvent::Error(format!("Delete recordings failed: {}", e)));
+        }
+    }
+}
+
+async fn handle_delete_telemetry(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
+    let pftp = PftpClient::new(p);
+    let _ = event_tx.send(BleEvent::DeviceOpsProgress("Deleting telemetry traces...".into()));
+    match cleanup::delete_telemetry_traces(&pftp).await {
+        Ok(deleted) => {
+            let _ = event_tx.send(BleEvent::DeviceOpsComplete(
+                format!("Deleted {} telemetry file(s)", deleted.len())
+            ));
+        }
+        Err(e) => {
+            let _ = event_tx.send(BleEvent::Error(format!("Delete telemetry failed: {}", e)));
         }
     }
 }

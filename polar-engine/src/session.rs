@@ -24,6 +24,8 @@ pub struct PolarSession {
     // Morning check
     morning_check: MorningCheckSnapshot,
     morning_ppi_buffer: Vec<PpiSample>,
+    // Device management ops
+    device_ops: DeviceOpsSnapshot,
 }
 
 impl PolarSession {
@@ -40,6 +42,7 @@ impl PolarSession {
             stream_sample_count: 0,
             morning_check: MorningCheckSnapshot::default(),
             morning_ppi_buffer: Vec::new(),
+            device_ops: DeviceOpsSnapshot::default(),
         }
     }
 
@@ -141,6 +144,53 @@ impl PolarSession {
 
     pub fn get_trigger(&self) {
         self.ble.send_command(BleCommand::GetTrigger);
+    }
+
+    pub fn setup_trigger(&self, mode: &str, types: Vec<String>) {
+        self.ble.send_command(BleCommand::SetupTrigger {
+            mode: mode.to_string(),
+            types,
+        });
+    }
+
+    pub fn sync_time(&self) {
+        self.ble.send_command(BleCommand::SyncTime);
+    }
+
+    pub fn device_restart(&mut self) {
+        self.device_ops = DeviceOpsSnapshot {
+            is_busy: true,
+            progress_text: "Restarting...".into(),
+            ..Default::default()
+        };
+        self.ble.send_command(BleCommand::DeviceRestart);
+    }
+
+    pub fn device_factory_reset(&mut self) {
+        self.device_ops = DeviceOpsSnapshot {
+            is_busy: true,
+            progress_text: "Factory resetting...".into(),
+            ..Default::default()
+        };
+        self.ble.send_command(BleCommand::DeviceFactoryReset);
+    }
+
+    pub fn delete_all_recordings(&mut self) {
+        self.device_ops = DeviceOpsSnapshot {
+            is_busy: true,
+            progress_text: "Deleting recordings...".into(),
+            ..Default::default()
+        };
+        self.ble.send_command(BleCommand::DeleteAllRecordings);
+    }
+
+    pub fn delete_telemetry(&mut self) {
+        self.device_ops = DeviceOpsSnapshot {
+            is_busy: true,
+            progress_text: "Deleting telemetry...".into(),
+            ..Default::default()
+        };
+        self.ble.send_command(BleCommand::DeleteTelemetry);
     }
 
     // ── Morning check commands ─────────────────────────────────
@@ -312,6 +362,7 @@ impl PolarSession {
                 self.connection = ConnectionSnapshot::default();
                 self.streaming = StreamSnapshot::default();
                 self.recording = RecordingSnapshot::default();
+                self.device_ops = DeviceOpsSnapshot::default();
             }
             BleEvent::Error(msg) => {
                 self.connection.error = msg.clone();
@@ -320,7 +371,11 @@ impl PolarSession {
                     self.streaming.is_streaming = false;
                 }
                 if self.files.is_syncing {
-                    self.files.error = msg;
+                    self.files.error = msg.clone();
+                }
+                if self.device_ops.is_busy {
+                    self.device_ops.is_busy = false;
+                    self.device_ops.error = msg;
                 }
             }
             BleEvent::DeviceInfo {
@@ -437,6 +492,13 @@ impl PolarSession {
                 self.morning_check.phase = MorningCheckPhase::Error;
                 self.morning_check.error = msg;
             }
+            BleEvent::DeviceOpsProgress(msg) => {
+                self.device_ops.progress_text = msg;
+            }
+            BleEvent::DeviceOpsComplete(msg) => {
+                self.device_ops.is_busy = false;
+                self.device_ops.progress_text = msg;
+            }
         }
     }
 
@@ -460,5 +522,9 @@ impl PolarSession {
 
     pub fn morning_check_snapshot(&self) -> MorningCheckSnapshot {
         self.morning_check.clone()
+    }
+
+    pub fn device_ops_snapshot(&self) -> DeviceOpsSnapshot {
+        self.device_ops.clone()
     }
 }

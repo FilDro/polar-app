@@ -37,7 +37,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueNom,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.11.1";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1163098685;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1873398262;
 
 // Section: executor
 
@@ -97,6 +97,78 @@ fn wire__crate__api__polar_api__polar_connect_impl(
             transform_result_dco::<_, _, ()>((move || {
                 let output_ok = Result::<_, ()>::Ok({
                     crate::api::polar_api::polar_connect(api_identifier);
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__polar_api__polar_delete_all_recordings_impl(
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::DcoCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "polar_delete_all_recordings",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            transform_result_dco::<_, _, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::polar_api::polar_delete_all_recordings();
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__polar_api__polar_delete_telemetry_impl(
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::DcoCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "polar_delete_telemetry",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            transform_result_dco::<_, _, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::polar_api::polar_delete_telemetry();
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__polar_api__polar_device_factory_reset_impl(
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::DcoCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "polar_device_factory_reset",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            transform_result_dco::<_, _, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::polar_api::polar_device_factory_reset();
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__polar_api__polar_device_restart_impl(
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::DcoCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "polar_device_restart",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            transform_result_dco::<_, _, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::polar_api::polar_device_restart();
                 })?;
                 Ok(output_ok)
             })())
@@ -169,6 +241,23 @@ fn wire__crate__api__polar_api__polar_poll_connection_impl(
             transform_result_dco::<_, _, ()>((move || {
                 let output_ok =
                     Result::<_, ()>::Ok(crate::api::polar_api::polar_poll_connection())?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__polar_api__polar_poll_device_ops_impl(
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::DcoCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "polar_poll_device_ops",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            transform_result_dco::<_, _, ()>((move || {
+                let output_ok =
+                    Result::<_, ()>::Ok(crate::api::polar_api::polar_poll_device_ops())?;
                 Ok(output_ok)
             })())
         },
@@ -276,6 +365,28 @@ fn wire__crate__api__polar_api__polar_set_trigger_impl(
             transform_result_dco::<_, _, ()>((move || {
                 let output_ok = Result::<_, ()>::Ok({
                     crate::api::polar_api::polar_set_trigger(api_mode);
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__polar_api__polar_setup_trigger_impl(
+    mode: impl CstDecode<String>,
+    types: impl CstDecode<Vec<String>>,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::DcoCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "polar_setup_trigger",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let api_mode = mode.cst_decode();
+            let api_types = types.cst_decode();
+            transform_result_dco::<_, _, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::polar_api::polar_setup_trigger(api_mode, api_types);
                 })?;
                 Ok(output_ok)
             })())
@@ -426,6 +537,24 @@ fn wire__crate__api__polar_api__polar_sync_files_impl(
             transform_result_dco::<_, _, ()>((move || {
                 let output_ok = Result::<_, ()>::Ok({
                     crate::api::polar_api::polar_sync_files();
+                })?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__polar_api__polar_sync_time_impl(
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::DcoCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "polar_sync_time",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            transform_result_dco::<_, _, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok({
+                    crate::api::polar_api::polar_sync_time();
                 })?;
                 Ok(output_ok)
             })())
@@ -674,6 +803,20 @@ impl SseDecode for crate::api::polar_api::PolarConnectionState {
             disk_total_kb: var_diskTotalKb,
             disk_free_kb: var_diskFreeKb,
             devices: var_devices,
+            error: var_error,
+        };
+    }
+}
+
+impl SseDecode for crate::api::polar_api::PolarDeviceOpsState {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_isBusy = <bool>::sse_decode(deserializer);
+        let mut var_progressText = <String>::sse_decode(deserializer);
+        let mut var_error = <String>::sse_decode(deserializer);
+        return crate::api::polar_api::PolarDeviceOpsState {
+            is_busy: var_isBusy,
+            progress_text: var_progressText,
             error: var_error,
         };
     }
@@ -962,6 +1105,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::polar_api::PolarConnectionSta
     for crate::api::polar_api::PolarConnectionState
 {
     fn into_into_dart(self) -> crate::api::polar_api::PolarConnectionState {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::polar_api::PolarDeviceOpsState {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.is_busy.into_into_dart().into_dart(),
+            self.progress_text.into_into_dart().into_dart(),
+            self.error.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::polar_api::PolarDeviceOpsState
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::polar_api::PolarDeviceOpsState>
+    for crate::api::polar_api::PolarDeviceOpsState
+{
+    fn into_into_dart(self) -> crate::api::polar_api::PolarDeviceOpsState {
         self
     }
 }
@@ -1346,6 +1511,15 @@ impl SseEncode for crate::api::polar_api::PolarConnectionState {
     }
 }
 
+impl SseEncode for crate::api::polar_api::PolarDeviceOpsState {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_busy, serializer);
+        <String>::sse_encode(self.progress_text, serializer);
+        <String>::sse_encode(self.error, serializer);
+    }
+}
+
 impl SseEncode for crate::api::polar_api::PolarDownloadedCsv {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1638,6 +1812,16 @@ mod io {
             }
         }
     }
+    impl CstDecode<crate::api::polar_api::PolarDeviceOpsState> for wire_cst_polar_device_ops_state {
+        // Codec=Cst (C-struct based), see doc to use other codecs
+        fn cst_decode(self) -> crate::api::polar_api::PolarDeviceOpsState {
+            crate::api::polar_api::PolarDeviceOpsState {
+                is_busy: self.is_busy.cst_decode(),
+                progress_text: self.progress_text.cst_decode(),
+                error: self.error.cst_decode(),
+            }
+        }
+    }
     impl CstDecode<crate::api::polar_api::PolarDownloadedCsv> for wire_cst_polar_downloaded_csv {
         // Codec=Cst (C-struct based), see doc to use other codecs
         fn cst_decode(self) -> crate::api::polar_api::PolarDownloadedCsv {
@@ -1781,6 +1965,20 @@ mod io {
         }
     }
     impl Default for wire_cst_polar_connection_state {
+        fn default() -> Self {
+            Self::new_with_null_ptr()
+        }
+    }
+    impl NewWithNullPtr for wire_cst_polar_device_ops_state {
+        fn new_with_null_ptr() -> Self {
+            Self {
+                is_busy: Default::default(),
+                progress_text: core::ptr::null_mut(),
+                error: core::ptr::null_mut(),
+            }
+        }
+    }
+    impl Default for wire_cst_polar_device_ops_state {
         fn default() -> Self {
             Self::new_with_null_ptr()
         }
@@ -1966,6 +2164,30 @@ mod io {
     }
 
     #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_delete_all_recordings(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_delete_all_recordings_impl()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_delete_telemetry(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_delete_telemetry_impl()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_device_factory_reset(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_device_factory_reset_impl()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_device_restart(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_device_restart_impl()
+    }
+
+    #[unsafe(no_mangle)]
     pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_disconnect(
     ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
         wire__crate__api__polar_api__polar_disconnect_impl()
@@ -1987,6 +2209,12 @@ mod io {
     pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_poll_connection(
     ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
         wire__crate__api__polar_api__polar_poll_connection_impl()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_poll_device_ops(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_poll_device_ops_impl()
     }
 
     #[unsafe(no_mangle)]
@@ -2026,6 +2254,14 @@ mod io {
         mode: *mut wire_cst_list_prim_u_8_strict,
     ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
         wire__crate__api__polar_api__polar_set_trigger_impl(mode)
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_setup_trigger(
+        mode: *mut wire_cst_list_prim_u_8_strict,
+        types: *mut wire_cst_list_String,
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_setup_trigger_impl(mode, types)
     }
 
     #[unsafe(no_mangle)]
@@ -2077,6 +2313,12 @@ mod io {
     pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_sync_files(
     ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
         wire__crate__api__polar_api__polar_sync_files_impl()
+    }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_polar_app_wire__crate__api__polar_api__polar_sync_time(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_sync_time_impl()
     }
 
     #[unsafe(no_mangle)]
@@ -2254,6 +2496,13 @@ mod io {
         disk_total_kb: i64,
         disk_free_kb: i64,
         devices: *mut wire_cst_list_polar_scanned_device,
+        error: *mut wire_cst_list_prim_u_8_strict,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct wire_cst_polar_device_ops_state {
+        is_busy: bool,
+        progress_text: *mut wire_cst_list_prim_u_8_strict,
         error: *mut wire_cst_list_prim_u_8_strict,
     }
     #[repr(C)]
@@ -2475,6 +2724,27 @@ mod web {
                 disk_free_kb: self_.get(8).cst_decode(),
                 devices: self_.get(9).cst_decode(),
                 error: self_.get(10).cst_decode(),
+            }
+        }
+    }
+    impl CstDecode<crate::api::polar_api::PolarDeviceOpsState>
+        for flutter_rust_bridge::for_generated::wasm_bindgen::JsValue
+    {
+        // Codec=Cst (C-struct based), see doc to use other codecs
+        fn cst_decode(self) -> crate::api::polar_api::PolarDeviceOpsState {
+            let self_ = self
+                .dyn_into::<flutter_rust_bridge::for_generated::js_sys::Array>()
+                .unwrap();
+            assert_eq!(
+                self_.length(),
+                3,
+                "Expected 3 elements, got {}",
+                self_.length()
+            );
+            crate::api::polar_api::PolarDeviceOpsState {
+                is_busy: self_.get(0).cst_decode(),
+                progress_text: self_.get(1).cst_decode(),
+                error: self_.get(2).cst_decode(),
             }
         }
     }
@@ -2806,6 +3076,30 @@ mod web {
     }
 
     #[wasm_bindgen]
+    pub fn wire__crate__api__polar_api__polar_delete_all_recordings(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_delete_all_recordings_impl()
+    }
+
+    #[wasm_bindgen]
+    pub fn wire__crate__api__polar_api__polar_delete_telemetry(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_delete_telemetry_impl()
+    }
+
+    #[wasm_bindgen]
+    pub fn wire__crate__api__polar_api__polar_device_factory_reset(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_device_factory_reset_impl()
+    }
+
+    #[wasm_bindgen]
+    pub fn wire__crate__api__polar_api__polar_device_restart(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_device_restart_impl()
+    }
+
+    #[wasm_bindgen]
     pub fn wire__crate__api__polar_api__polar_disconnect(
     ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
         wire__crate__api__polar_api__polar_disconnect_impl()
@@ -2827,6 +3121,12 @@ mod web {
     pub fn wire__crate__api__polar_api__polar_poll_connection(
     ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
         wire__crate__api__polar_api__polar_poll_connection_impl()
+    }
+
+    #[wasm_bindgen]
+    pub fn wire__crate__api__polar_api__polar_poll_device_ops(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_poll_device_ops_impl()
     }
 
     #[wasm_bindgen]
@@ -2866,6 +3166,14 @@ mod web {
         mode: String,
     ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
         wire__crate__api__polar_api__polar_set_trigger_impl(mode)
+    }
+
+    #[wasm_bindgen]
+    pub fn wire__crate__api__polar_api__polar_setup_trigger(
+        mode: String,
+        types: flutter_rust_bridge::for_generated::wasm_bindgen::JsValue,
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_setup_trigger_impl(mode, types)
     }
 
     #[wasm_bindgen]
@@ -2917,6 +3225,12 @@ mod web {
     pub fn wire__crate__api__polar_api__polar_sync_files(
     ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
         wire__crate__api__polar_api__polar_sync_files_impl()
+    }
+
+    #[wasm_bindgen]
+    pub fn wire__crate__api__polar_api__polar_sync_time(
+    ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartDco {
+        wire__crate__api__polar_api__polar_sync_time_impl()
     }
 }
 #[cfg(target_family = "wasm")]
