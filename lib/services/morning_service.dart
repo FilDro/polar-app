@@ -19,6 +19,7 @@ class MorningCheckService extends ChangeNotifier {
   double get elapsedS => _state?.elapsedS ?? 0;
   int get hrBpm => _state?.hrBpm ?? 0;
   int get ppiCount => _state?.ppiCount ?? 0;
+  bridge.PolarMorningDiagnostics? get diagnostics => _state?.diagnostics;
   bridge.PolarMorningResult? get result => _state?.result;
   String get error => _state?.error ?? '';
 

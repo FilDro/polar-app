@@ -11,8 +11,8 @@ pub struct SessionSummary {
     pub hr_avg: f64,
     pub hr_max: u16,
     pub hr_min: u16,
-    pub zone_seconds: Vec<f64>,   // 6 elements: [below_z1, z1, z2, z3, z4, z5]
-    pub zone_percent: Vec<f64>,   // 6 elements
+    pub zone_seconds: Vec<f64>, // 6 elements: [below_z1, z1, z2, z3, z4, z5]
+    pub zone_percent: Vec<f64>, // 6 elements
 }
 
 /// Raw HR data extracted from a downloaded recording, for later processing.
@@ -222,6 +222,7 @@ pub struct MorningCheckSnapshot {
     pub elapsed_s: f64,
     pub hr_bpm: u8,
     pub ppi_count: usize,
+    pub diagnostics: Option<MorningCheckDiagnostics>,
     pub result: Option<MorningResult>,
     pub error: String,
 }
@@ -233,10 +234,30 @@ impl Default for MorningCheckSnapshot {
             elapsed_s: 0.0,
             hr_bpm: 0,
             ppi_count: 0,
+            diagnostics: None,
             result: None,
             error: String::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MorningCheckDiagnostics {
+    pub raw_samples: usize,
+    pub warmup_discarded: usize,
+    pub flagged_samples: usize,
+    pub valid_post_warmup: usize,
+}
+
+/// Internal timed PPI sample used by the morning readiness pipeline.
+#[derive(Debug, Clone)]
+pub struct TimedMorningPpiSample {
+    pub elapsed_s: f64,
+    pub raw_hr_bpm: u8,
+    pub display_hr_bpm: u8,
+    pub ppi_ms: u16,
+    pub error_estimate: u16,
+    pub flags: u8,
 }
 
 #[derive(Debug, Clone)]
@@ -247,7 +268,8 @@ pub struct MorningResult {
     pub rmssd_ms: f64,
     pub resting_hr_bpm: f64,
     pub rr_count: usize,
-    /// Number of PPI samples discarded due to the blocker flag.
+    /// Retained for bridge compatibility; the dedicated morning path currently
+    /// reports zero because Verity Sense flags are treated as diagnostics only.
     pub rejected_count: usize,
     pub readiness: String,
     pub stability: String,

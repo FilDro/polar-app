@@ -21,8 +21,46 @@ use polar_rs::services::{battery, device_info, heart_rate};
 use polar_rs::types::{MeasurementType, RecordingType};
 
 use crate::state::{
-    DownloadedCsv, FileEntry, HrRecordingData, ScannedDevice,
+    DownloadedCsv, FileEntry, HrRecordingData, ScannedDevice, TimedMorningPpiSample,
 };
+
+fn derive_ppi_hr_bpm(ppi_ms: u16) -> u8 {
+    if ppi_ms == 0 {
+        return 0;
+    }
+
+    ((60_000.0 / ppi_ms as f64).round()).clamp(0.0, u8::MAX as f64) as u8
+}
+
+fn build_timed_morning_samples(
+    batch_elapsed_s: f64,
+    samples: &[PpiSample],
+) -> Vec<TimedMorningPpiSample> {
+    let mut trailing_s = 0.0;
+    let mut timed_samples = Vec::with_capacity(samples.len());
+
+    for sample in samples.iter().rev() {
+        let display_hr_bpm = if sample.hr > 0 {
+            sample.hr
+        } else {
+            derive_ppi_hr_bpm(sample.ppi_ms)
+        };
+
+        timed_samples.push(TimedMorningPpiSample {
+            elapsed_s: (batch_elapsed_s - trailing_s).max(0.0),
+            raw_hr_bpm: sample.hr,
+            display_hr_bpm,
+            ppi_ms: sample.ppi_ms,
+            error_estimate: sample.error_estimate,
+            flags: sample.flags,
+        });
+
+        trailing_s += sample.ppi_ms as f64 / 1000.0;
+    }
+
+    timed_samples.reverse();
+    timed_samples
+}
 
 /// Commands sent from the main thread to the BLE runtime.
 #[derive(Debug)]
@@ -113,7 +151,9 @@ pub enum BleEvent {
     // Streaming
     StreamStarted(String),
     StreamStopped,
-    HrSample { bpm: u16 },
+    HrSample {
+        bpm: u16,
+    },
     AccSamples {
         samples: Vec<[i32; 3]>,
         timestamp_ns: u64,
@@ -148,7 +188,7 @@ pub enum BleEvent {
         ppi_count: usize,
     },
     MorningCheckComplete {
-        samples: Vec<PpiSample>,
+        samples: Vec<TimedMorningPpiSample>,
     },
     MorningCheckError(String),
     // Device ops
@@ -171,8 +211,7 @@ impl BleRuntime {
         let thread = std::thread::Builder::new()
             .name("ble-runtime".into())
             .spawn(move || {
-                let rt = tokio::runtime::Runtime::new()
-                    .expect("failed to create tokio runtime");
+                let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
                 rt.block_on(ble_runtime_loop(cmd_rx, event_tx));
             })
             .expect("failed to spawn BLE thread");
@@ -199,10 +238,7 @@ impl BleRuntime {
 }
 
 /// Main async loop running on the BLE background thread.
-async fn ble_runtime_loop(
-    cmd_rx: mpsc::Receiver<BleCommand>,
-    event_tx: mpsc::Sender<BleEvent>,
-) {
+async fn ble_runtime_loop(cmd_rx: mpsc::Receiver<BleCommand>, event_tx: mpsc::Sender<BleEvent>) {
     let mut peripheral: Option<PolarPeripheral> = None;
 
     loop {
@@ -371,7 +407,9 @@ async fn handle_scan(event_tx: &mpsc::Sender<BleEvent>, duration_s: u64) {
     let _ = event_tx.send(BleEvent::ScanComplete);
 }
 
-async fn handle_connect(identifier: &str) -> Result<PolarPeripheral, Box<dyn std::error::Error + Send + Sync>> {
+async fn handle_connect(
+    identifier: &str,
+) -> Result<PolarPeripheral, Box<dyn std::error::Error + Send + Sync>> {
     let device = scanner::find_device(identifier, Duration::from_secs(10)).await?;
     let peripheral = PolarPeripheral::connect(device.peripheral, device.adapter).await?;
     // Enable PFTP notifications for file operations
@@ -383,19 +421,27 @@ async fn handle_connect(identifier: &str) -> Result<PolarPeripheral, Box<dyn std
 async fn handle_device_info(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
     use polar_rs::ble::transport::BleTransport;
 
-    let model = p.read(uuids::DIS_MODEL_NUMBER).await
+    let model = p
+        .read(uuids::DIS_MODEL_NUMBER)
+        .await
         .ok()
         .and_then(|d| device_info::parse_dis_string(&d))
         .unwrap_or_default();
-    let firmware = p.read(uuids::DIS_FIRMWARE_REV).await
+    let firmware = p
+        .read(uuids::DIS_FIRMWARE_REV)
+        .await
         .ok()
         .and_then(|d| device_info::parse_dis_string(&d))
         .unwrap_or_default();
-    let serial = p.read(uuids::DIS_SERIAL_NUMBER).await
+    let serial = p
+        .read(uuids::DIS_SERIAL_NUMBER)
+        .await
         .ok()
         .and_then(|d| device_info::parse_dis_string(&d))
         .unwrap_or_default();
-    let bat = p.read(uuids::BATTERY_LEVEL).await
+    let bat = p
+        .read(uuids::BATTERY_LEVEL)
+        .await
         .ok()
         .and_then(|d| battery::parse_battery_level(&d))
         .map(|b| b as i32)
@@ -445,7 +491,14 @@ async fn handle_stream(
             }
 
             let enable_sdk = commands::build_enable_sdk_mode();
-            if let Err(e) = p.write(uuids::PMD_CP, &enable_sdk, polar_rs::ble::transport::WriteType::WithResponse).await {
+            if let Err(e) = p
+                .write(
+                    uuids::PMD_CP,
+                    &enable_sdk,
+                    polar_rs::ble::transport::WriteType::WithResponse,
+                )
+                .await
+            {
                 let _ = event_tx.send(BleEvent::Error(format!("SDK mode failed: {}", e)));
                 return;
             }
@@ -465,8 +518,15 @@ async fn handle_stream(
                     MeasurementType::Gyro => (416, 2000),
                     _ => (416, 8),
                 };
-                let cmd = commands::build_start_stream(*mt, RecordingType::Online, rate, 16, range, 3);
-                let _ = p.write(uuids::PMD_CP, &cmd, polar_rs::ble::transport::WriteType::WithResponse).await;
+                let cmd =
+                    commands::build_start_stream(*mt, RecordingType::Online, rate, 16, range, 3);
+                let _ = p
+                    .write(
+                        uuids::PMD_CP,
+                        &cmd,
+                        polar_rs::ble::transport::WriteType::WithResponse,
+                    )
+                    .await;
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
 
@@ -478,12 +538,24 @@ async fn handle_stream(
             // Stop streams
             for mt in &types {
                 let cmd = commands::build_stop_stream(*mt);
-                let _ = p.write(uuids::PMD_CP, &cmd, polar_rs::ble::transport::WriteType::WithResponse).await;
+                let _ = p
+                    .write(
+                        uuids::PMD_CP,
+                        &cmd,
+                        polar_rs::ble::transport::WriteType::WithResponse,
+                    )
+                    .await;
             }
 
             // Disable SDK mode
             let disable = commands::build_disable_sdk_mode();
-            let _ = p.write(uuids::PMD_CP, &disable, polar_rs::ble::transport::WriteType::WithResponse).await;
+            let _ = p
+                .write(
+                    uuids::PMD_CP,
+                    &disable,
+                    polar_rs::ble::transport::WriteType::WithResponse,
+                )
+                .await;
         }
         StreamConfig::Full => {
             // Non-SDK mode: HR + 52Hz IMU
@@ -499,8 +571,15 @@ async fn handle_stream(
                 (MeasurementType::Magnetometer, 50, 50),
             ];
             for (mt, rate, range) in &imu_types {
-                let cmd = commands::build_start_stream(*mt, RecordingType::Online, *rate, 16, *range, 3);
-                let _ = p.write(uuids::PMD_CP, &cmd, polar_rs::ble::transport::WriteType::WithResponse).await;
+                let cmd =
+                    commands::build_start_stream(*mt, RecordingType::Online, *rate, 16, *range, 3);
+                let _ = p
+                    .write(
+                        uuids::PMD_CP,
+                        &cmd,
+                        polar_rs::ble::transport::WriteType::WithResponse,
+                    )
+                    .await;
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
 
@@ -512,7 +591,13 @@ async fn handle_stream(
             // Stop IMU streams
             for (mt, _, _) in &imu_types {
                 let cmd = commands::build_stop_stream(*mt);
-                let _ = p.write(uuids::PMD_CP, &cmd, polar_rs::ble::transport::WriteType::WithResponse).await;
+                let _ = p
+                    .write(
+                        uuids::PMD_CP,
+                        &cmd,
+                        polar_rs::ble::transport::WriteType::WithResponse,
+                    )
+                    .await;
             }
         }
     }
@@ -679,18 +764,34 @@ async fn handle_morning_check(
 
     // Enable notifications on PMD CP and PMD DATA
     if let Err(e) = p.enable_notifications(uuids::PMD_CP).await {
-        let _ = event_tx.send(BleEvent::MorningCheckError(format!("PMD CP notify failed: {}", e)));
+        let _ = event_tx.send(BleEvent::MorningCheckError(format!(
+            "PMD CP notify failed: {}",
+            e
+        )));
         return;
     }
     if let Err(e) = p.enable_notifications(uuids::PMD_DATA).await {
-        let _ = event_tx.send(BleEvent::MorningCheckError(format!("PMD DATA notify failed: {}", e)));
+        let _ = event_tx.send(BleEvent::MorningCheckError(format!(
+            "PMD DATA notify failed: {}",
+            e
+        )));
         return;
     }
 
     // Start PPI online stream (no settings needed)
     let start_cmd = commands::build_start_no_settings(MeasurementType::Ppi, RecordingType::Online);
-    if let Err(e) = p.write(uuids::PMD_CP, &start_cmd, polar_rs::ble::transport::WriteType::WithResponse).await {
-        let _ = event_tx.send(BleEvent::MorningCheckError(format!("PPI start failed: {}", e)));
+    if let Err(e) = p
+        .write(
+            uuids::PMD_CP,
+            &start_cmd,
+            polar_rs::ble::transport::WriteType::WithResponse,
+        )
+        .await
+    {
+        let _ = event_tx.send(BleEvent::MorningCheckError(format!(
+            "PPI start failed: {}",
+            e
+        )));
         return;
     }
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -699,7 +800,10 @@ async fn handle_morning_check(
     let mut rx = match p.subscribe(uuids::PMD_DATA).await {
         Ok(rx) => rx,
         Err(e) => {
-            let _ = event_tx.send(BleEvent::MorningCheckError(format!("PMD subscribe failed: {}", e)));
+            let _ = event_tx.send(BleEvent::MorningCheckError(format!(
+                "PMD subscribe failed: {}",
+                e
+            )));
             return;
         }
     };
@@ -707,7 +811,7 @@ async fn handle_morning_check(
     let start_time = Instant::now();
     let total_duration = Duration::from_secs(85);
     let warmup_duration = Duration::from_secs(25);
-    let mut all_samples: Vec<PpiSample> = Vec::new();
+    let mut all_samples: Vec<TimedMorningPpiSample> = Vec::new();
     let mut last_progress = Instant::now();
     let mut latest_hr: u8 = 0;
 
@@ -732,16 +836,22 @@ async fn handle_morning_check(
             Ok(Ok(notif)) => {
                 if let Ok(frame) = parse_pmd_frame(&notif.data, 1.0) {
                     if let PmdSamples::Ppi(ref samples) = frame.samples {
-                        for s in samples {
-                            latest_hr = s.hr;
-                            all_samples.push(s.clone());
+                        let timed_samples = build_timed_morning_samples(
+                            start_time.elapsed().as_secs_f64(),
+                            samples,
+                        );
+                        for sample in timed_samples {
+                            latest_hr = sample.display_hr_bpm;
+                            all_samples.push(sample);
                         }
                     }
                 }
             }
             Ok(Err(_)) => {
                 // Channel closed (disconnected)
-                let _ = event_tx.send(BleEvent::MorningCheckError("BLE disconnected during morning check".into()));
+                let _ = event_tx.send(BleEvent::MorningCheckError(
+                    "BLE disconnected during morning check".into(),
+                ));
                 return;
             }
             Err(_) => {
@@ -768,7 +878,20 @@ async fn handle_morning_check(
 
     // Stop PPI stream
     let stop_cmd = commands::build_stop_stream(MeasurementType::Ppi);
-    let _ = p.write(uuids::PMD_CP, &stop_cmd, polar_rs::ble::transport::WriteType::WithResponse).await;
+    let _ = p
+        .write(
+            uuids::PMD_CP,
+            &stop_cmd,
+            polar_rs::ble::transport::WriteType::WithResponse,
+        )
+        .await;
+
+    if all_samples.is_empty() {
+        let _ = event_tx.send(BleEvent::MorningCheckError(
+            "No PPI data received from the sensor. Check strap contact and try again.".into(),
+        ));
+        return;
+    }
 
     // Emit completion
     let _ = event_tx.send(BleEvent::MorningCheckComplete {
@@ -791,13 +914,92 @@ fn parse_measurement_types(types: &[String]) -> Vec<MeasurementType> {
         .collect()
 }
 
+/// Build the PMD control-point command that enables offline trigger settings
+/// for one measurement type.
+///
+/// `polar-rs` provides high-level helpers for trigger mode operations, but it
+/// does not yet expose a single composed helper for the per-type CP 0x09 setup
+/// sequence. We keep that low-level protocol detail centralized here so it is
+/// documented and not scattered across multiple runtime handlers.
+fn build_trigger_setting_command(type_str: &str) -> Option<Vec<u8>> {
+    match type_str.to_lowercase().as_str() {
+        "acc" => Some(commands::build_set_offline_trigger_setting_enabled(
+            MeasurementType::Acc,
+            52,
+            16,
+            8,
+            3,
+        )),
+        "gyro" => Some(commands::build_set_offline_trigger_setting_enabled(
+            MeasurementType::Gyro,
+            52,
+            16,
+            2000,
+            3,
+        )),
+        "mag" | "magnetometer" => Some(commands::build_set_offline_trigger_setting_enabled(
+            MeasurementType::Magnetometer,
+            50,
+            16,
+            50,
+            3,
+        )),
+        "hr" => Some(
+            commands::build_set_offline_trigger_setting_enabled_no_settings(
+                MeasurementType::OfflineHr,
+            ),
+        ),
+        "ppi" => Some(
+            commands::build_set_offline_trigger_setting_enabled_no_settings(MeasurementType::Ppi),
+        ),
+        _ => None,
+    }
+}
+
+fn parse_trigger_status_mode(data: &[u8]) -> &'static str {
+    if data.len() <= 5 {
+        return "unknown";
+    }
+
+    match data[5] {
+        0 => "disabled",
+        1 => "system-start",
+        2 => "exercise-start",
+        _ => "unknown",
+    }
+}
+
+async fn apply_trigger_settings(
+    p: &PolarPeripheral,
+    types: &[String],
+    event_tx: &mpsc::Sender<BleEvent>,
+) -> bool {
+    use polar_rs::ble::transport::{BleTransport, WriteType};
+
+    for type_str in types {
+        let Some(cmd) = build_trigger_setting_command(type_str) else {
+            continue;
+        };
+
+        if let Err(e) = p.write(uuids::PMD_CP, &cmd, WriteType::WithResponse).await {
+            let _ = event_tx.send(BleEvent::Error(format!(
+                "Trigger settings failed for {}: {}",
+                type_str, e
+            )));
+            return false;
+        }
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    true
+}
+
 async fn handle_start_recording(
     p: &PolarPeripheral,
     types: &[String],
     event_tx: &mpsc::Sender<BleEvent>,
 ) {
-    use polar_rs::ble::transport::BleTransport;
-
     if let Err(e) = p.enable_notifications(uuids::PMD_CP).await {
         let _ = event_tx.send(BleEvent::Error(format!("PMD CP failed: {}", e)));
         return;
@@ -819,8 +1021,6 @@ async fn handle_stop_recording(
     types: &[String],
     event_tx: &mpsc::Sender<BleEvent>,
 ) {
-    use polar_rs::ble::transport::BleTransport;
-
     let _ = p.enable_notifications(uuids::PMD_CP).await;
 
     let meas_types = parse_measurement_types(types);
@@ -834,12 +1034,7 @@ async fn handle_stop_recording(
     }
 }
 
-async fn handle_recording_status(
-    p: &PolarPeripheral,
-    event_tx: &mpsc::Sender<BleEvent>,
-) {
-    use polar_rs::ble::transport::BleTransport;
-
+async fn handle_recording_status(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
     let _ = p.enable_notifications(uuids::PMD_CP).await;
 
     match workflow::get_recording_status(p).await {
@@ -868,10 +1063,7 @@ async fn handle_recording_status(
     }
 }
 
-async fn handle_list_files(
-    p: &PolarPeripheral,
-    event_tx: &mpsc::Sender<BleEvent>,
-) {
+async fn handle_list_files(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
     let pftp = PftpClient::new(p);
 
     if let Err(e) = pftp.start_sync().await {
@@ -900,10 +1092,7 @@ async fn handle_list_files(
     let _ = pftp.stop_sync().await;
 }
 
-async fn handle_sync_files(
-    p: &PolarPeripheral,
-    event_tx: &mpsc::Sender<BleEvent>,
-) {
+async fn handle_sync_files(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
     let pftp = PftpClient::new(p);
 
     if let Err(e) = pftp.start_sync().await {
@@ -922,9 +1111,12 @@ async fn handle_sync_files(
 
     let total = entries.len();
     for (i, entry) in entries.iter().enumerate() {
-        let _ = event_tx.send(BleEvent::FileSyncProgress(
-            format!("{}/{} — {}", i + 1, total, entry.path),
-        ));
+        let _ = event_tx.send(BleEvent::FileSyncProgress(format!(
+            "{}/{} — {}",
+            i + 1,
+            total,
+            entry.path
+        )));
 
         match download_recording(&pftp, entry).await {
             Ok(recording) => {
@@ -936,7 +1128,12 @@ async fn handle_sync_files(
 
                 let csv = recording_to_csv(&recording);
                 let session_time = entry.path.split('/').rev().nth(1).unwrap_or("unknown");
-                let type_name = entry.path.split('/').last().unwrap_or("REC").replace(".REC", "");
+                let type_name = entry
+                    .path
+                    .split('/')
+                    .last()
+                    .unwrap_or("REC")
+                    .replace(".REC", "");
                 let filename = format!("{}_{}.csv", session_time, type_name);
 
                 let _ = event_tx.send(BleEvent::FileDownloaded(DownloadedCsv {
@@ -975,13 +1172,7 @@ async fn handle_sync_files(
     let _ = event_tx.send(BleEvent::FileSyncComplete);
 }
 
-async fn handle_set_trigger(
-    p: &PolarPeripheral,
-    mode: &str,
-    event_tx: &mpsc::Sender<BleEvent>,
-) {
-    use polar_rs::ble::transport::BleTransport;
-
+async fn handle_set_trigger(p: &PolarPeripheral, mode: &str, event_tx: &mpsc::Sender<BleEvent>) {
     let _ = p.enable_notifications(uuids::PMD_CP).await;
 
     let trigger_mode = match workflow::TriggerMode::from_str(mode) {
@@ -1002,26 +1193,12 @@ async fn handle_set_trigger(
     }
 }
 
-async fn handle_get_trigger(
-    p: &PolarPeripheral,
-    event_tx: &mpsc::Sender<BleEvent>,
-) {
-    use polar_rs::ble::transport::BleTransport;
-
+async fn handle_get_trigger(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
     let _ = p.enable_notifications(uuids::PMD_CP).await;
 
     match workflow::get_trigger_status(p).await {
         Ok(data) => {
-            let mode = if data.len() > 5 {
-                match data[5] {
-                    0 => "disabled",
-                    1 => "system-start",
-                    2 => "exercise-start",
-                    _ => "unknown",
-                }
-            } else {
-                "unknown"
-            };
+            let mode = parse_trigger_status_mode(&data);
             let _ = event_tx.send(BleEvent::TriggerStatus(mode.to_string()));
         }
         Err(e) => {
@@ -1036,39 +1213,10 @@ async fn handle_setup_trigger(
     types: &[String],
     event_tx: &mpsc::Sender<BleEvent>,
 ) {
-    use polar_rs::ble::transport::{BleTransport, WriteType};
-
     let _ = p.enable_notifications(uuids::PMD_CP).await;
 
-    // Step 1: CP 0x09 — set trigger settings for each type individually
-    for type_str in types {
-        let cmd = match type_str.to_lowercase().as_str() {
-            "acc" => Some(commands::build_set_offline_trigger_setting_enabled(
-                MeasurementType::Acc, 52, 16, 8, 3,
-            )),
-            "gyro" => Some(commands::build_set_offline_trigger_setting_enabled(
-                MeasurementType::Gyro, 52, 16, 2000, 3,
-            )),
-            "mag" | "magnetometer" => Some(commands::build_set_offline_trigger_setting_enabled(
-                MeasurementType::Magnetometer, 50, 16, 50, 3,
-            )),
-            "hr" => Some(commands::build_set_offline_trigger_setting_enabled_no_settings(
-                MeasurementType::OfflineHr,
-            )),
-            "ppi" => Some(commands::build_set_offline_trigger_setting_enabled_no_settings(
-                MeasurementType::Ppi,
-            )),
-            _ => None,
-        };
-        if let Some(cmd) = cmd {
-            if let Err(e) = p.write(uuids::PMD_CP, &cmd, WriteType::WithResponse).await {
-                let _ = event_tx.send(BleEvent::Error(format!(
-                    "Trigger settings failed for {}: {}", type_str, e
-                )));
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
-        }
+    if !apply_trigger_settings(p, types, event_tx).await {
+        return;
     }
 
     // Step 2: CP 0x08 — set trigger mode
@@ -1080,22 +1228,40 @@ async fn handle_setup_trigger(
         }
     };
     match workflow::set_trigger(p, trigger_mode).await {
-        Ok(()) => { let _ = event_tx.send(BleEvent::TriggerSet(mode.to_string())); }
-        Err(e) => { let _ = event_tx.send(BleEvent::Error(format!("Set trigger mode failed: {}", e))); }
+        Ok(()) => {
+            let _ = event_tx.send(BleEvent::TriggerSet(mode.to_string()));
+        }
+        Err(e) => {
+            let _ = event_tx.send(BleEvent::Error(format!("Set trigger mode failed: {}", e)));
+        }
     }
 }
 
 async fn handle_sync_time(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
     use std::time::{SystemTime, UNIX_EPOCH};
     let pftp = PftpClient::new(p);
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let tod = now % 86400;
     let (year, month, day) = days_to_ymd(now / 86400);
-    match pftp.set_local_time(year, month, day, (tod / 3600) as u32, ((tod % 3600) / 60) as u32, (tod % 60) as u32).await {
+    match pftp
+        .set_local_time(
+            year,
+            month,
+            day,
+            (tod / 3600) as u32,
+            ((tod % 3600) / 60) as u32,
+            (tod % 60) as u32,
+        )
+        .await
+    {
         Ok(()) => {
-            let _ = event_tx.send(BleEvent::DeviceOpsProgress(
-                format!("Clock synced {:04}-{:02}-{:02}", year, month, day)
-            ));
+            let _ = event_tx.send(BleEvent::DeviceOpsProgress(format!(
+                "Clock synced {:04}-{:02}-{:02}",
+                year, month, day
+            )));
         }
         Err(e) => {
             tracing::warn!("Time sync failed (non-fatal): {}", e);
@@ -1127,7 +1293,9 @@ async fn handle_device_restart(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleE
             let _ = event_tx.send(BleEvent::DeviceOpsComplete("Device restarting".into()));
             let _ = event_tx.send(BleEvent::Disconnected);
         }
-        Err(e) => { let _ = event_tx.send(BleEvent::Error(format!("Restart failed: {}", e))); }
+        Err(e) => {
+            let _ = event_tx.send(BleEvent::Error(format!("Restart failed: {}", e)));
+        }
     }
 }
 
@@ -1139,13 +1307,17 @@ async fn handle_device_factory_reset(p: &PolarPeripheral, event_tx: &mpsc::Sende
             let _ = event_tx.send(BleEvent::DeviceOpsComplete("Factory reset sent".into()));
             let _ = event_tx.send(BleEvent::Disconnected);
         }
-        Err(e) => { let _ = event_tx.send(BleEvent::Error(format!("Factory reset failed: {}", e))); }
+        Err(e) => {
+            let _ = event_tx.send(BleEvent::Error(format!("Factory reset failed: {}", e)));
+        }
     }
 }
 
 async fn handle_delete_all_recordings(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
     let pftp = PftpClient::new(p);
-    let _ = event_tx.send(BleEvent::DeviceOpsProgress("Deleting all recordings...".into()));
+    let _ = event_tx.send(BleEvent::DeviceOpsProgress(
+        "Deleting all recordings...".into(),
+    ));
     if let Err(e) = pftp.start_sync().await {
         let _ = event_tx.send(BleEvent::Error(format!("Sync start failed: {}", e)));
         return;
@@ -1153,9 +1325,10 @@ async fn handle_delete_all_recordings(p: &PolarPeripheral, event_tx: &mpsc::Send
     match cleanup::delete_date_folders(&pftp, "00000000", "99999999").await {
         Ok(deleted) => {
             let _ = pftp.stop_sync().await;
-            let _ = event_tx.send(BleEvent::DeviceOpsComplete(
-                format!("Deleted {} date folder(s)", deleted.len())
-            ));
+            let _ = event_tx.send(BleEvent::DeviceOpsComplete(format!(
+                "Deleted {} date folder(s)",
+                deleted.len()
+            )));
         }
         Err(e) => {
             let _ = pftp.stop_sync().await;
@@ -1166,12 +1339,15 @@ async fn handle_delete_all_recordings(p: &PolarPeripheral, event_tx: &mpsc::Send
 
 async fn handle_delete_telemetry(p: &PolarPeripheral, event_tx: &mpsc::Sender<BleEvent>) {
     let pftp = PftpClient::new(p);
-    let _ = event_tx.send(BleEvent::DeviceOpsProgress("Deleting telemetry traces...".into()));
+    let _ = event_tx.send(BleEvent::DeviceOpsProgress(
+        "Deleting telemetry traces...".into(),
+    ));
     match cleanup::delete_telemetry_traces(&pftp).await {
         Ok(deleted) => {
-            let _ = event_tx.send(BleEvent::DeviceOpsComplete(
-                format!("Deleted {} telemetry file(s)", deleted.len())
-            ));
+            let _ = event_tx.send(BleEvent::DeviceOpsComplete(format!(
+                "Deleted {} telemetry file(s)",
+                deleted.len()
+            )));
         }
         Err(e) => {
             let _ = event_tx.send(BleEvent::Error(format!("Delete telemetry failed: {}", e)));
@@ -1187,7 +1363,12 @@ fn extract_hr_data(
 
     let mut samples = Vec::new();
     let mut prev_ts: Option<u64> = None;
-    let sample_rate = recording.settings.sample_rates.first().copied().unwrap_or(1);
+    let sample_rate = recording
+        .settings
+        .sample_rates
+        .first()
+        .copied()
+        .unwrap_or(1);
     let mut base_ns: Option<u64> = None;
 
     for frame in &recording.frames {
@@ -1204,7 +1385,11 @@ fn extract_hr_data(
             for (i, s) in hr_samples.iter().enumerate() {
                 let ts_ns = timestamps.get(i).copied().unwrap_or(frame.timestamp_ns);
                 let ts_s = (ts_ns - base) as f64 / 1_000_000_000.0;
-                let hr = if s.corrected_hr > 0 { s.corrected_hr } else { s.hr };
+                let hr = if s.corrected_hr > 0 {
+                    s.corrected_hr
+                } else {
+                    s.hr
+                };
                 if hr > 0 {
                     samples.push((ts_s, hr as u16));
                 }
@@ -1224,7 +1409,12 @@ fn recording_to_csv(recording: &polar_rs::offline::file_format::OfflineRecording
 
     let mut csv = String::new();
     let mut prev_ts: Option<u64> = None;
-    let sample_rate = recording.settings.sample_rates.first().copied().unwrap_or(52);
+    let sample_rate = recording
+        .settings
+        .sample_rates
+        .first()
+        .copied()
+        .unwrap_or(52);
 
     for frame in &recording.frames {
         let count = frame.samples.len();
@@ -1233,38 +1423,54 @@ fn recording_to_csv(recording: &polar_rs::offline::file_format::OfflineRecording
 
         match &frame.samples {
             PmdSamples::Acc(samples) => {
-                if csv.is_empty() { csv.push_str("timestamp_ns,x_mg,y_mg,z_mg\n"); }
+                if csv.is_empty() {
+                    csv.push_str("timestamp_ns,x_mg,y_mg,z_mg\n");
+                }
                 for (i, s) in samples.iter().enumerate() {
                     let ts = timestamps.get(i).copied().unwrap_or(frame.timestamp_ns);
                     csv.push_str(&format!("{},{},{},{}\n", ts, s[0], s[1], s[2]));
                 }
             }
             PmdSamples::Gyro(samples) => {
-                if csv.is_empty() { csv.push_str("timestamp_ns,x_dps,y_dps,z_dps\n"); }
+                if csv.is_empty() {
+                    csv.push_str("timestamp_ns,x_dps,y_dps,z_dps\n");
+                }
                 for (i, s) in samples.iter().enumerate() {
                     let ts = timestamps.get(i).copied().unwrap_or(frame.timestamp_ns);
                     csv.push_str(&format!("{},{:.2},{:.2},{:.2}\n", ts, s[0], s[1], s[2]));
                 }
             }
             PmdSamples::Mag(samples) => {
-                if csv.is_empty() { csv.push_str("timestamp_ns,x,y,z\n"); }
+                if csv.is_empty() {
+                    csv.push_str("timestamp_ns,x,y,z\n");
+                }
                 for (i, s) in samples.iter().enumerate() {
                     let ts = timestamps.get(i).copied().unwrap_or(frame.timestamp_ns);
                     csv.push_str(&format!("{},{:.4},{:.4},{:.4}\n", ts, s[0], s[1], s[2]));
                 }
             }
             PmdSamples::Hr(samples) => {
-                if csv.is_empty() { csv.push_str("timestamp_ns,hr_bpm,ppg_quality,corrected_hr\n"); }
+                if csv.is_empty() {
+                    csv.push_str("timestamp_ns,hr_bpm,ppg_quality,corrected_hr\n");
+                }
                 for (i, s) in samples.iter().enumerate() {
                     let ts = timestamps.get(i).copied().unwrap_or(frame.timestamp_ns);
-                    csv.push_str(&format!("{},{},{},{}\n", ts, s.hr, s.ppg_quality, s.corrected_hr));
+                    csv.push_str(&format!(
+                        "{},{},{},{}\n",
+                        ts, s.hr, s.ppg_quality, s.corrected_hr
+                    ));
                 }
             }
             PmdSamples::Ppi(samples) => {
-                if csv.is_empty() { csv.push_str("timestamp_ns,hr_bpm,ppi_ms,error_estimate,flags\n"); }
+                if csv.is_empty() {
+                    csv.push_str("timestamp_ns,hr_bpm,ppi_ms,error_estimate,flags\n");
+                }
                 for (i, s) in samples.iter().enumerate() {
                     let ts = timestamps.get(i).copied().unwrap_or(frame.timestamp_ns);
-                    csv.push_str(&format!("{},{},{},{},{}\n", ts, s.hr, s.ppi_ms, s.error_estimate, s.flags));
+                    csv.push_str(&format!(
+                        "{},{},{},{},{}\n",
+                        ts, s.hr, s.ppi_ms, s.error_estimate, s.flags
+                    ));
                 }
             }
             PmdSamples::Ppg(samples) => {
@@ -1280,12 +1486,52 @@ fn recording_to_csv(recording: &polar_rs::offline::file_format::OfflineRecording
                 }
             }
             _ => {
-                if csv.is_empty() { csv.push_str("timestamp_ns,raw\n"); }
+                if csv.is_empty() {
+                    csv.push_str("timestamp_ns,raw\n");
+                }
                 csv.push_str(&format!("{},unsupported\n", frame.timestamp_ns));
             }
         }
     }
 
-    if csv.is_empty() { csv.push_str("# empty recording\n"); }
+    if csv.is_empty() {
+        csv.push_str("# empty recording\n");
+    }
     csv
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_trigger_setting_command, derive_ppi_hr_bpm, parse_trigger_status_mode};
+
+    #[test]
+    fn trigger_status_parser_handles_known_values() {
+        assert_eq!(parse_trigger_status_mode(&[0, 0, 0, 0, 0, 0]), "disabled");
+        assert_eq!(
+            parse_trigger_status_mode(&[0, 0, 0, 0, 0, 1]),
+            "system-start"
+        );
+        assert_eq!(
+            parse_trigger_status_mode(&[0, 0, 0, 0, 0, 2]),
+            "exercise-start"
+        );
+        assert_eq!(parse_trigger_status_mode(&[0, 0, 0]), "unknown");
+    }
+
+    #[test]
+    fn trigger_setting_command_exists_for_supported_types() {
+        assert!(build_trigger_setting_command("acc").is_some());
+        assert!(build_trigger_setting_command("gyro").is_some());
+        assert!(build_trigger_setting_command("mag").is_some());
+        assert!(build_trigger_setting_command("hr").is_some());
+        assert!(build_trigger_setting_command("ppi").is_some());
+        assert!(build_trigger_setting_command("unknown").is_none());
+    }
+
+    #[test]
+    fn derive_ppi_hr_bpm_uses_rr_interval_when_hr_field_is_empty() {
+        assert_eq!(derive_ppi_hr_bpm(0), 0);
+        assert_eq!(derive_ppi_hr_bpm(1000), 60);
+        assert_eq!(derive_ppi_hr_bpm(909), 66);
+    }
 }

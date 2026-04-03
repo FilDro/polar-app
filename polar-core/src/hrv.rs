@@ -88,10 +88,7 @@ pub fn compute_hrv(samples: &[PpiInput], warmup_s: f64) -> Result<HrvResult, Hrv
     }
 
     // Phase 2: successive differences
-    let successive_diffs: Vec<f64> = rr_intervals
-        .windows(2)
-        .map(|w| w[1] - w[0])
-        .collect();
+    let successive_diffs: Vec<f64> = rr_intervals.windows(2).map(|w| w[1] - w[0]).collect();
 
     if successive_diffs.is_empty() {
         return Err(HrvError::NoValidIntervals);

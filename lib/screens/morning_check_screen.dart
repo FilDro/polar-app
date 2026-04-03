@@ -2,7 +2,9 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../database/database.dart';
+import '../services/athlete_service.dart';
 import '../services/ble_service.dart';
+import '../services/cloud_sync_service.dart';
 import '../services/morning_service.dart';
 import '../src/rust/api/polar_api.dart' as bridge;
 import '../theme/colors.dart';
@@ -53,7 +55,9 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
       // When the Rust side signals "computing", we compute the result here.
       // Guard with _isComputing to prevent duplicate calls while the async
       // DB load is in flight (this listener fires on every poll tick).
-      if (_morning.phase == 'computing' && _computedResult == null && !_isComputing) {
+      if (_morning.phase == 'computing' &&
+          _computedResult == null &&
+          !_isComputing) {
         _computeResult();
       }
       setState(() {});
@@ -63,27 +67,62 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
   Future<void> _computeResult() async {
     _isComputing = true;
     try {
-      final db = AppDatabase.instance;
-      final athlete = await db.getActiveAthlete();
-      final history = athlete != null
-          ? await db.getBaselineHistory(athlete.id)
-          : const <double>[];
-      final result = bridge.polarComputeMorningResult(baselineHistory: history);
-      if (athlete != null) {
-        await _saveResult(athlete.id, result);
+      final athleteId = AthleteService.instance.athleteId;
+      if (athleteId == null) {
+        throw StateError('No athlete profile available for morning check');
       }
-      if (mounted) setState(() { _computedResult = result; });
+
+      final db = AppDatabase.instance;
+      final history = await db.getBaselineHistory(athleteId);
+      final result = bridge.polarComputeMorningResult(baselineHistory: history);
+      if (!_isUsableResult(result)) {
+        debugPrint(
+          'Morning check invalid result: readiness=${result.readiness}, '
+          'rrCount=${result.rrCount}, rejected=${result.rejectedCount}',
+        );
+        return;
+      }
+
+      await _saveResult(athleteId, result);
+      if (mounted) {
+        setState(() {
+          _computedResult = result;
+        });
+      }
     } catch (e) {
       debugPrint('Morning check compute error: $e');
+    } finally {
+      _isComputing = false;
     }
   }
 
-  Future<void> _saveResult(String athleteId, bridge.PolarMorningResult r) async {
+  bool _isUsableResult(bridge.PolarMorningResult result) {
+    final readiness = result.readiness.trim().toLowerCase();
+    return readiness.isNotEmpty && readiness != 'error' && result.rrCount > 0;
+  }
+
+  String _formatDiagnostics(bridge.PolarMorningDiagnostics? diagnostics) {
+    if (diagnostics == null || diagnostics.rawSamples == 0) {
+      return '';
+    }
+
+    return 'Raw ${diagnostics.rawSamples}  |  '
+        'Warmup ${diagnostics.warmupDiscarded}  |  '
+        'Flagged ${diagnostics.flaggedSamples}  |  '
+        'Valid ${diagnostics.validPostWarmup}';
+  }
+
+  Future<void> _saveResult(
+    String athleteId,
+    bridge.PolarMorningResult r,
+  ) async {
     final today = DateTime.now();
+    final date = DateTime(today.year, today.month, today.day);
+
     await AppDatabase.instance.upsertWellness(
       DailyWellnessEntriesCompanion(
         athleteId: Value(athleteId),
-        date: Value(DateTime(today.year, today.month, today.day)),
+        date: Value(date),
         lnRmssd: Value(r.lnRmssd),
         rmssdMs: Value(r.rmssdMs),
         restingHr: Value(r.restingHrBpm.round()),
@@ -96,6 +135,24 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
         cv7day: Value(r.cv7Day > 0 ? r.cv7Day : null),
       ),
     );
+
+    // Best-effort cloud upload — fire-and-forget, does not block UI
+    CloudSyncService.instance
+        .syncWellness(
+          athleteId: athleteId,
+          date: date,
+          restingHr: r.restingHrBpm.round(),
+          lnRmssd: r.lnRmssd,
+          rmssdMs: r.rmssdMs,
+          rrCount: r.rrCount,
+          readiness: r.readiness,
+          baselineMean: r.baselineMean > 0 ? r.baselineMean : null,
+          baselineSd: r.baselineSd > 0 ? r.baselineSd : null,
+          cv7day: r.cv7Day > 0 ? r.cv7Day : null,
+        )
+        .then((ok) {
+          if (!ok) debugPrint('MorningCheck: cloud sync skipped or failed');
+        });
   }
 
   void _onDone() {
@@ -364,6 +421,8 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
   }
 
   Widget _buildDone(bridge.PolarMorningResult result, KineColors colors) {
+    final diagnosticsText = _formatDiagnostics(_morning.diagnostics);
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -375,10 +434,16 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               _ResultMetric(
-                  'lnRMSSD (today)', result.lnRmssd.toStringAsFixed(2), colors),
+                'lnRMSSD (today)',
+                result.lnRmssd.toStringAsFixed(2),
+                colors,
+              ),
               const SizedBox(width: KineSpacing.xl),
               _ResultMetric(
-                  'lnRMSSD (7-day)', result.lnRmssd7Day.toStringAsFixed(2), colors),
+                'lnRMSSD (7-day)',
+                result.lnRmssd7Day.toStringAsFixed(2),
+                colors,
+              ),
             ],
           ),
           const SizedBox(height: KineSpacing.sm),
@@ -410,6 +475,14 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
               style: TextStyle(fontSize: 12, color: colors.textMuted),
             ),
           ],
+          if (diagnosticsText.isNotEmpty) ...[
+            const SizedBox(height: KineSpacing.sm),
+            Text(
+              diagnosticsText,
+              style: TextStyle(fontSize: 12, color: colors.textMuted),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: KineSpacing.xl),
           FilledButton(
             onPressed: _onDone,
@@ -424,6 +497,8 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
   }
 
   Widget _buildError(KineColors colors) {
+    final diagnosticsText = _formatDiagnostics(_morning.diagnostics);
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -432,12 +507,17 @@ class _MorningCheckScreenState extends State<MorningCheckScreen> {
           const SizedBox(height: KineSpacing.md),
           Text(
             _morning.error,
-            style: TextStyle(
-              fontSize: 16,
-              color: colors.error,
-            ),
+            style: TextStyle(fontSize: 16, color: colors.error),
             textAlign: TextAlign.center,
           ),
+          if (diagnosticsText.isNotEmpty) ...[
+            const SizedBox(height: KineSpacing.sm),
+            Text(
+              diagnosticsText,
+              style: TextStyle(fontSize: 13, color: colors.textMuted),
+              textAlign: TextAlign.center,
+            ),
+          ],
           const SizedBox(height: KineSpacing.lg),
           FilledButton.icon(
             onPressed: _onRetry,
@@ -470,10 +550,7 @@ class _MiniMetric extends StatelessWidget {
             fontFeatures: const [FontFeature.tabularFigures()],
           ),
         ),
-        Text(
-          label,
-          style: TextStyle(fontSize: 11, color: colors.textMuted),
-        ),
+        Text(label, style: TextStyle(fontSize: 11, color: colors.textMuted)),
       ],
     );
   }
@@ -500,10 +577,7 @@ class _ResultMetric extends StatelessWidget {
           ),
         ),
         const SizedBox(height: KineSpacing.xs),
-        Text(
-          label,
-          style: TextStyle(fontSize: 11, color: colors.textMuted),
-        ),
+        Text(label, style: TextStyle(fontSize: 11, color: colors.textMuted)),
       ],
     );
   }

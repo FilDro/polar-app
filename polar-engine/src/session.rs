@@ -5,10 +5,18 @@
 
 use std::time::Instant;
 
-use polar_rs::pmd::data_types::PpiSample;
+use polar_core::hrv::PpiInput;
 
 use crate::ble_runtime::{BleCommand, BleEvent, BleRuntime, StreamConfig};
 use crate::state::*;
+
+const MORNING_WARMUP_S: f64 = 25.0;
+const MORNING_MIN_SAMPLES: usize = 30;
+
+struct PreprocessedMorningSamples {
+    diagnostics: MorningCheckDiagnostics,
+    inputs: Vec<PpiInput>,
+}
 
 pub struct PolarSession {
     ble: BleRuntime,
@@ -23,7 +31,7 @@ pub struct PolarSession {
     stream_sample_count: u64,
     // Morning check
     morning_check: MorningCheckSnapshot,
-    morning_ppi_buffer: Vec<PpiSample>,
+    morning_ppi_buffer: Vec<TimedMorningPpiSample>,
     // Device management ops
     device_ops: DeviceOpsSnapshot,
 }
@@ -51,7 +59,8 @@ impl PolarSession {
     pub fn start_scan(&mut self) {
         self.connection.status = ConnectionStatus::Scanning;
         self.connection.devices.clear();
-        self.ble.send_command(BleCommand::StartScan { duration_s: 5 });
+        self.ble
+            .send_command(BleCommand::StartScan { duration_s: 5 });
     }
 
     pub fn connect(&mut self, identifier: &str) {
@@ -212,27 +221,47 @@ impl PolarSession {
     /// Compute morning result from accumulated PPI samples + baseline history.
     /// baseline_history: vec of historical lnRMSSD values (up to 60 days, excluding today).
     pub fn compute_morning_result(&mut self, baseline_history: &[f64]) -> MorningResult {
-        use polar_core::hrv::{PpiInput, compute_hrv};
-        use polar_core::scoring::{compute_baseline, compute_7day_mean, score_readiness, baseline_phase, BaselinePhase};
+        use polar_core::hrv::compute_hrv;
+        use polar_core::scoring::{
+            baseline_phase, compute_7day_mean, compute_baseline, score_readiness, BaselinePhase,
+        };
 
-        // Convert PpiSamples to PpiInputs
-        let inputs: Vec<PpiInput> = self.morning_ppi_buffer.iter().map(|s| PpiInput {
-            hr: s.hr,
-            ppi_ms: s.ppi_ms,
-            error_estimate: s.error_estimate,
-            flags: s.flags,
-        }).collect();
+        let preprocessed = preprocess_morning_samples(&self.morning_ppi_buffer, MORNING_WARMUP_S);
+        self.morning_check.diagnostics = Some(preprocessed.diagnostics.clone());
 
-        // Compute HRV (25s warmup discard)
-        let hrv = match compute_hrv(&inputs, 25.0) {
+        if preprocessed.diagnostics.raw_samples == 0 {
+            self.morning_check.phase = MorningCheckPhase::Error;
+            self.morning_check.error =
+                "No PPI data received from the sensor. Check strap contact and try again."
+                    .to_string();
+            self.morning_check.result = None;
+            return MorningResult::default();
+        }
+
+        if preprocessed.diagnostics.valid_post_warmup == 0 {
+            self.morning_check.phase = MorningCheckPhase::Error;
+            self.morning_check.error = "no valid RR intervals after warmup".to_string();
+            self.morning_check.result = None;
+            return MorningResult::default();
+        }
+
+        if preprocessed.diagnostics.valid_post_warmup < MORNING_MIN_SAMPLES {
+            self.morning_check.phase = MorningCheckPhase::Error;
+            self.morning_check.error = format!(
+                "not enough samples: got {}, need {}",
+                preprocessed.diagnostics.valid_post_warmup, MORNING_MIN_SAMPLES
+            );
+            self.morning_check.result = None;
+            return MorningResult::default();
+        }
+
+        let hrv = match compute_hrv(&preprocessed.inputs, 0.0) {
             Ok(r) => r,
             Err(e) => {
-                let mut error_result = MorningResult::default();
                 self.morning_check.phase = MorningCheckPhase::Error;
-                self.morning_check.error = format!("{}", e);
-                error_result.readiness = "error".to_string();
-                self.morning_check.result = Some(error_result.clone());
-                return error_result;
+                self.morning_check.error = e.to_string();
+                self.morning_check.result = None;
+                return MorningResult::default();
             }
         };
 
@@ -268,7 +297,7 @@ impl PolarSession {
             rmssd_ms: hrv.rmssd_ms,
             resting_hr_bpm: hrv.resting_hr_bpm,
             rr_count: hrv.rr_count,
-            rejected_count: hrv.rejected_count,
+            rejected_count: 0,
             readiness: readiness_str.to_string(),
             stability: stability_str.to_string(),
             baseline_mean: scoring.baseline.mean,
@@ -277,6 +306,7 @@ impl PolarSession {
             day_count: scoring.baseline.day_count,
         };
 
+        self.morning_check.error.clear();
         self.morning_check.result = Some(result.clone());
         self.morning_check.phase = MorningCheckPhase::Done;
         result
@@ -287,8 +317,8 @@ impl PolarSession {
     /// Process downloaded HR data into a session summary.
     /// Call after file sync completes and hr_data is available.
     pub fn process_session(&mut self, hr_max: u16, hr_rest: u16) -> Option<SessionSummary> {
-        use polar_core::zones::{AthleteConfig, classify_hr_series};
         use polar_core::trimp::edwards_trimp;
+        use polar_core::zones::{classify_hr_series, AthleteConfig};
 
         let hr_data = self.files.hr_data.as_ref()?;
 
@@ -460,10 +490,8 @@ impl PolarSession {
             }
             BleEvent::FileSyncComplete => {
                 self.files.is_syncing = false;
-                self.files.progress_text = format!(
-                    "Complete — {} files",
-                    self.files.downloaded_csvs.len()
-                );
+                self.files.progress_text =
+                    format!("Complete — {} files", self.files.downloaded_csvs.len());
             }
             BleEvent::HrDataReady(data) => {
                 self.files.hr_data = Some(data);
@@ -474,7 +502,12 @@ impl PolarSession {
             BleEvent::TriggerSet(mode) => {
                 self.recording.status_text = format!("Trigger set to: {}", mode);
             }
-            BleEvent::MorningCheckProgress { phase, elapsed_s, hr_bpm, ppi_count } => {
+            BleEvent::MorningCheckProgress {
+                phase,
+                elapsed_s,
+                hr_bpm,
+                ppi_count,
+            } => {
                 self.morning_check.phase = if phase == "warmup" {
                     MorningCheckPhase::Warmup
                 } else {
@@ -487,10 +520,16 @@ impl PolarSession {
             BleEvent::MorningCheckComplete { samples } => {
                 self.morning_ppi_buffer = samples;
                 self.morning_check.phase = MorningCheckPhase::Computing;
+                self.morning_check.ppi_count = self.morning_ppi_buffer.len();
+                self.morning_check.error.clear();
             }
             BleEvent::MorningCheckError(msg) => {
                 self.morning_check.phase = MorningCheckPhase::Error;
                 self.morning_check.error = msg;
+                self.morning_check.diagnostics = Some(MorningCheckDiagnostics {
+                    raw_samples: self.morning_check.ppi_count,
+                    ..Default::default()
+                });
             }
             BleEvent::DeviceOpsProgress(msg) => {
                 self.device_ops.progress_text = msg;
@@ -526,5 +565,159 @@ impl PolarSession {
 
     pub fn device_ops_snapshot(&self) -> DeviceOpsSnapshot {
         self.device_ops.clone()
+    }
+}
+
+fn preprocess_morning_samples(
+    samples: &[TimedMorningPpiSample],
+    warmup_s: f64,
+) -> PreprocessedMorningSamples {
+    let mut inputs = Vec::with_capacity(samples.len());
+    let mut warmup_discarded = 0usize;
+    let mut flagged_samples = 0usize;
+
+    for sample in samples {
+        if sample.elapsed_s < warmup_s {
+            warmup_discarded += 1;
+            continue;
+        }
+
+        if sample.flags != 0 {
+            flagged_samples += 1;
+        }
+
+        if sample.ppi_ms == 0 {
+            continue;
+        }
+
+        inputs.push(PpiInput {
+            hr: if sample.display_hr_bpm > 0 {
+                sample.display_hr_bpm
+            } else {
+                derive_hr_bpm(sample.ppi_ms)
+            },
+            ppi_ms: sample.ppi_ms,
+            error_estimate: sample.error_estimate,
+            flags: 0,
+        });
+    }
+
+    PreprocessedMorningSamples {
+        diagnostics: MorningCheckDiagnostics {
+            raw_samples: samples.len(),
+            warmup_discarded,
+            flagged_samples,
+            valid_post_warmup: inputs.len(),
+        },
+        inputs,
+    }
+}
+
+fn derive_hr_bpm(ppi_ms: u16) -> u8 {
+    if ppi_ms == 0 {
+        return 0;
+    }
+
+    ((60_000.0 / ppi_ms as f64).round()).clamp(0.0, u8::MAX as f64) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{derive_hr_bpm, preprocess_morning_samples, MORNING_MIN_SAMPLES, MORNING_WARMUP_S};
+    use crate::state::TimedMorningPpiSample;
+
+    #[test]
+    fn derive_hr_bpm_returns_zero_for_zero_ppi() {
+        assert_eq!(derive_hr_bpm(0), 0);
+    }
+
+    #[test]
+    fn derive_hr_bpm_maps_rr_to_expected_bpm() {
+        assert_eq!(derive_hr_bpm(1000), 60);
+        assert_eq!(derive_hr_bpm(750), 80);
+    }
+
+    #[test]
+    fn preprocess_discards_by_elapsed_warmup_not_flags() {
+        let samples = vec![
+            timed_sample(24.9, 1000),
+            timed_sample(25.1, 980),
+            timed_sample(26.0, 960),
+        ];
+
+        let preprocessed = preprocess_morning_samples(&samples, MORNING_WARMUP_S);
+
+        assert_eq!(preprocessed.diagnostics.raw_samples, 3);
+        assert_eq!(preprocessed.diagnostics.warmup_discarded, 1);
+        assert_eq!(preprocessed.diagnostics.flagged_samples, 2);
+        assert_eq!(preprocessed.diagnostics.valid_post_warmup, 2);
+        assert_eq!(preprocessed.inputs.len(), 2);
+        assert!(preprocessed.inputs.iter().all(|sample| sample.flags == 0));
+    }
+
+    #[test]
+    fn preprocess_matches_cli_like_verity_sense_trace() {
+        let samples = cli_like_trace_samples();
+
+        let preprocessed = preprocess_morning_samples(&samples, MORNING_WARMUP_S);
+
+        assert_eq!(preprocessed.diagnostics.raw_samples, samples.len());
+        assert!(preprocessed.diagnostics.warmup_discarded > 0);
+        assert_eq!(
+            preprocessed.diagnostics.valid_post_warmup,
+            preprocessed.inputs.len()
+        );
+        assert!(preprocessed.diagnostics.valid_post_warmup >= MORNING_MIN_SAMPLES);
+        assert!(preprocessed.inputs.iter().all(|sample| sample.hr > 0));
+        assert!(preprocessed.inputs.iter().all(|sample| sample.flags == 0));
+    }
+
+    fn timed_sample(elapsed_s: f64, ppi_ms: u16) -> TimedMorningPpiSample {
+        TimedMorningPpiSample {
+            elapsed_s,
+            raw_hr_bpm: 0,
+            display_hr_bpm: derive_hr_bpm(ppi_ms),
+            ppi_ms,
+            error_estimate: 10,
+            flags: 0x07,
+        }
+    }
+
+    fn cli_like_trace_samples() -> Vec<TimedMorningPpiSample> {
+        let mut samples = Vec::new();
+        samples.extend(trace_batch(
+            16.1,
+            &[376, 1149, 808, 948, 896, 965, 967, 945, 979],
+        ));
+        samples.extend(trace_batch(21.1, &[952, 927, 950, 997, 958]));
+        samples.extend(trace_batch(26.1, &[964, 1000, 968, 994, 994]));
+        samples.extend(trace_batch(31.1, &[956, 979, 969, 973, 923]));
+        samples.extend(trace_batch(36.2, &[948, 948, 929, 958, 931, 867]));
+        samples.extend(trace_batch(41.1, &[861, 815, 799, 823, 861, 887]));
+        samples.extend(trace_batch(46.0, &[906, 902, 929, 941, 914]));
+        samples.extend(trace_batch(50.8, &[945, 933, 931, 963, 965]));
+        samples.extend(trace_batch(55.9, &[919, 935, 931, 937, 914, 959]));
+        samples.extend(trace_batch(61.0, &[989, 972, 950, 952, 913]));
+        samples
+    }
+
+    fn trace_batch(batch_elapsed_s: f64, ppi_values: &[u16]) -> Vec<TimedMorningPpiSample> {
+        let mut trailing_s = 0.0;
+        let mut samples = Vec::with_capacity(ppi_values.len());
+
+        for ppi_ms in ppi_values.iter().rev() {
+            samples.push(TimedMorningPpiSample {
+                elapsed_s: (batch_elapsed_s - trailing_s).max(0.0),
+                raw_hr_bpm: 0,
+                display_hr_bpm: derive_hr_bpm(*ppi_ms),
+                ppi_ms: *ppi_ms,
+                error_estimate: 10,
+                flags: 0x07,
+            });
+            trailing_s += *ppi_ms as f64 / 1000.0;
+        }
+
+        samples.reverse();
+        samples
     }
 }

@@ -751,6 +751,19 @@ impl SseDecode for Vec<u8> {
     }
 }
 
+impl SseDecode for Option<crate::api::polar_api::PolarMorningDiagnostics> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(
+                <crate::api::polar_api::PolarMorningDiagnostics>::sse_decode(deserializer),
+            );
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::polar_api::PolarMorningResult> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -884,6 +897,8 @@ impl SseDecode for crate::api::polar_api::PolarMorningCheckState {
         let mut var_elapsedS = <f64>::sse_decode(deserializer);
         let mut var_hrBpm = <u8>::sse_decode(deserializer);
         let mut var_ppiCount = <u32>::sse_decode(deserializer);
+        let mut var_diagnostics =
+            <Option<crate::api::polar_api::PolarMorningDiagnostics>>::sse_decode(deserializer);
         let mut var_result =
             <Option<crate::api::polar_api::PolarMorningResult>>::sse_decode(deserializer);
         let mut var_error = <String>::sse_decode(deserializer);
@@ -892,8 +907,25 @@ impl SseDecode for crate::api::polar_api::PolarMorningCheckState {
             elapsed_s: var_elapsedS,
             hr_bpm: var_hrBpm,
             ppi_count: var_ppiCount,
+            diagnostics: var_diagnostics,
             result: var_result,
             error: var_error,
+        };
+    }
+}
+
+impl SseDecode for crate::api::polar_api::PolarMorningDiagnostics {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_rawSamples = <u32>::sse_decode(deserializer);
+        let mut var_warmupDiscarded = <u32>::sse_decode(deserializer);
+        let mut var_flaggedSamples = <u32>::sse_decode(deserializer);
+        let mut var_validPostWarmup = <u32>::sse_decode(deserializer);
+        return crate::api::polar_api::PolarMorningDiagnostics {
+            raw_samples: var_rawSamples,
+            warmup_discarded: var_warmupDiscarded,
+            flagged_samples: var_flaggedSamples,
+            valid_post_warmup: var_validPostWarmup,
         };
     }
 }
@@ -1209,6 +1241,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::polar_api::PolarMorningCheckS
             self.elapsed_s.into_into_dart().into_dart(),
             self.hr_bpm.into_into_dart().into_dart(),
             self.ppi_count.into_into_dart().into_dart(),
+            self.diagnostics.into_into_dart().into_dart(),
             self.result.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
         ]
@@ -1223,6 +1256,29 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::polar_api::PolarMorningCheckS
     for crate::api::polar_api::PolarMorningCheckState
 {
     fn into_into_dart(self) -> crate::api::polar_api::PolarMorningCheckState {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::polar_api::PolarMorningDiagnostics {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.raw_samples.into_into_dart().into_dart(),
+            self.warmup_discarded.into_into_dart().into_dart(),
+            self.flagged_samples.into_into_dart().into_dart(),
+            self.valid_post_warmup.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::polar_api::PolarMorningDiagnostics
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::polar_api::PolarMorningDiagnostics>
+    for crate::api::polar_api::PolarMorningDiagnostics
+{
+    fn into_into_dart(self) -> crate::api::polar_api::PolarMorningDiagnostics {
         self
     }
 }
@@ -1474,6 +1530,16 @@ impl SseEncode for Vec<u8> {
     }
 }
 
+impl SseEncode for Option<crate::api::polar_api::PolarMorningDiagnostics> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::polar_api::PolarMorningDiagnostics>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::polar_api::PolarMorningResult> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1565,8 +1631,22 @@ impl SseEncode for crate::api::polar_api::PolarMorningCheckState {
         <f64>::sse_encode(self.elapsed_s, serializer);
         <u8>::sse_encode(self.hr_bpm, serializer);
         <u32>::sse_encode(self.ppi_count, serializer);
+        <Option<crate::api::polar_api::PolarMorningDiagnostics>>::sse_encode(
+            self.diagnostics,
+            serializer,
+        );
         <Option<crate::api::polar_api::PolarMorningResult>>::sse_encode(self.result, serializer);
         <String>::sse_encode(self.error, serializer);
+    }
+}
+
+impl SseEncode for crate::api::polar_api::PolarMorningDiagnostics {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.raw_samples, serializer);
+        <u32>::sse_encode(self.warmup_discarded, serializer);
+        <u32>::sse_encode(self.flagged_samples, serializer);
+        <u32>::sse_encode(self.valid_post_warmup, serializer);
     }
 }
 
@@ -1698,6 +1778,15 @@ mod io {
         fn cst_decode(self) -> String {
             let vec: Vec<u8> = self.cst_decode();
             String::from_utf8(vec).unwrap()
+        }
+    }
+    impl CstDecode<crate::api::polar_api::PolarMorningDiagnostics>
+        for *mut wire_cst_polar_morning_diagnostics
+    {
+        // Codec=Cst (C-struct based), see doc to use other codecs
+        fn cst_decode(self) -> crate::api::polar_api::PolarMorningDiagnostics {
+            let wrap = unsafe { flutter_rust_bridge::for_generated::box_from_leak_ptr(self) };
+            CstDecode::<crate::api::polar_api::PolarMorningDiagnostics>::cst_decode(*wrap).into()
         }
     }
     impl CstDecode<crate::api::polar_api::PolarMorningResult> for *mut wire_cst_polar_morning_result {
@@ -1867,8 +1956,22 @@ mod io {
                 elapsed_s: self.elapsed_s.cst_decode(),
                 hr_bpm: self.hr_bpm.cst_decode(),
                 ppi_count: self.ppi_count.cst_decode(),
+                diagnostics: self.diagnostics.cst_decode(),
                 result: self.result.cst_decode(),
                 error: self.error.cst_decode(),
+            }
+        }
+    }
+    impl CstDecode<crate::api::polar_api::PolarMorningDiagnostics>
+        for wire_cst_polar_morning_diagnostics
+    {
+        // Codec=Cst (C-struct based), see doc to use other codecs
+        fn cst_decode(self) -> crate::api::polar_api::PolarMorningDiagnostics {
+            crate::api::polar_api::PolarMorningDiagnostics {
+                raw_samples: self.raw_samples.cst_decode(),
+                warmup_discarded: self.warmup_discarded.cst_decode(),
+                flagged_samples: self.flagged_samples.cst_decode(),
+                valid_post_warmup: self.valid_post_warmup.cst_decode(),
             }
         }
     }
@@ -2037,12 +2140,28 @@ mod io {
                 elapsed_s: Default::default(),
                 hr_bpm: Default::default(),
                 ppi_count: Default::default(),
+                diagnostics: core::ptr::null_mut(),
                 result: core::ptr::null_mut(),
                 error: core::ptr::null_mut(),
             }
         }
     }
     impl Default for wire_cst_polar_morning_check_state {
+        fn default() -> Self {
+            Self::new_with_null_ptr()
+        }
+    }
+    impl NewWithNullPtr for wire_cst_polar_morning_diagnostics {
+        fn new_with_null_ptr() -> Self {
+            Self {
+                raw_samples: Default::default(),
+                warmup_discarded: Default::default(),
+                flagged_samples: Default::default(),
+                valid_post_warmup: Default::default(),
+            }
+        }
+    }
+    impl Default for wire_cst_polar_morning_diagnostics {
         fn default() -> Self {
             Self::new_with_null_ptr()
         }
@@ -2322,6 +2441,14 @@ mod io {
     }
 
     #[unsafe(no_mangle)]
+    pub extern "C" fn frbgen_polar_app_cst_new_box_autoadd_polar_morning_diagnostics(
+    ) -> *mut wire_cst_polar_morning_diagnostics {
+        flutter_rust_bridge::for_generated::new_leak_box_ptr(
+            wire_cst_polar_morning_diagnostics::new_with_null_ptr(),
+        )
+    }
+
+    #[unsafe(no_mangle)]
     pub extern "C" fn frbgen_polar_app_cst_new_box_autoadd_polar_morning_result(
     ) -> *mut wire_cst_polar_morning_result {
         flutter_rust_bridge::for_generated::new_leak_box_ptr(
@@ -2538,8 +2665,17 @@ mod io {
         elapsed_s: f64,
         hr_bpm: u8,
         ppi_count: u32,
+        diagnostics: *mut wire_cst_polar_morning_diagnostics,
         result: *mut wire_cst_polar_morning_result,
         error: *mut wire_cst_list_prim_u_8_strict,
+    }
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    pub struct wire_cst_polar_morning_diagnostics {
+        raw_samples: u32,
+        warmup_discarded: u32,
+        flagged_samples: u32,
+        valid_post_warmup: u32,
     }
     #[repr(C)]
     #[derive(Clone, Copy)]
@@ -2826,8 +2962,8 @@ mod web {
                 .unwrap();
             assert_eq!(
                 self_.length(),
-                6,
-                "Expected 6 elements, got {}",
+                7,
+                "Expected 7 elements, got {}",
                 self_.length()
             );
             crate::api::polar_api::PolarMorningCheckState {
@@ -2835,8 +2971,31 @@ mod web {
                 elapsed_s: self_.get(1).cst_decode(),
                 hr_bpm: self_.get(2).cst_decode(),
                 ppi_count: self_.get(3).cst_decode(),
-                result: self_.get(4).cst_decode(),
-                error: self_.get(5).cst_decode(),
+                diagnostics: self_.get(4).cst_decode(),
+                result: self_.get(5).cst_decode(),
+                error: self_.get(6).cst_decode(),
+            }
+        }
+    }
+    impl CstDecode<crate::api::polar_api::PolarMorningDiagnostics>
+        for flutter_rust_bridge::for_generated::wasm_bindgen::JsValue
+    {
+        // Codec=Cst (C-struct based), see doc to use other codecs
+        fn cst_decode(self) -> crate::api::polar_api::PolarMorningDiagnostics {
+            let self_ = self
+                .dyn_into::<flutter_rust_bridge::for_generated::js_sys::Array>()
+                .unwrap();
+            assert_eq!(
+                self_.length(),
+                4,
+                "Expected 4 elements, got {}",
+                self_.length()
+            );
+            crate::api::polar_api::PolarMorningDiagnostics {
+                raw_samples: self_.get(0).cst_decode(),
+                warmup_discarded: self_.get(1).cst_decode(),
+                flagged_samples: self_.get(2).cst_decode(),
+                valid_post_warmup: self_.get(3).cst_decode(),
             }
         }
     }

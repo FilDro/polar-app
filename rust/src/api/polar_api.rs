@@ -3,8 +3,8 @@
 //! All functions are #[frb(sync)]. Zero logic here — every function
 //! delegates to PolarSession via the global SESSION mutex.
 
-use std::sync::Mutex;
 use polar_engine::session::PolarSession;
+use std::sync::Mutex;
 
 static SESSION: Mutex<Option<PolarSession>> = Mutex::new(None);
 
@@ -103,8 +103,18 @@ pub struct PolarMorningCheckState {
     pub elapsed_s: f64,
     pub hr_bpm: u8,
     pub ppi_count: u32,
+    pub diagnostics: Option<PolarMorningDiagnostics>,
     pub result: Option<PolarMorningResult>,
     pub error: String,
+}
+
+#[flutter_rust_bridge::frb]
+#[derive(Debug, Clone)]
+pub struct PolarMorningDiagnostics {
+    pub raw_samples: u32,
+    pub warmup_discarded: u32,
+    pub flagged_samples: u32,
+    pub valid_post_warmup: u32,
 }
 
 #[flutter_rust_bridge::frb]
@@ -116,7 +126,8 @@ pub struct PolarMorningResult {
     pub rmssd_ms: f64,
     pub resting_hr_bpm: f64,
     pub rr_count: u32,
-    /// Samples discarded due to the sensor blocker flag (motion detected).
+    /// Retained for compatibility; the dedicated morning path no longer
+    /// rejects Verity Sense intervals from the flags byte.
     pub rejected_count: u32,
     pub readiness: String,
     pub stability: String,
@@ -171,7 +182,11 @@ impl From<polar_engine::state::ConnectionSnapshot> for PolarConnectionState {
             serial: s.serial,
             disk_total_kb: s.disk_total_kb,
             disk_free_kb: s.disk_free_kb,
-            devices: s.devices.into_iter().map(PolarScannedDevice::from).collect(),
+            devices: s
+                .devices
+                .into_iter()
+                .map(PolarScannedDevice::from)
+                .collect(),
             error: s.error,
         }
     }
@@ -236,7 +251,11 @@ impl From<polar_engine::state::FilesSnapshot> for PolarFilesState {
             is_syncing: s.is_syncing,
             entries: s.entries.into_iter().map(PolarFileEntry::from).collect(),
             progress_text: s.progress_text,
-            downloaded_csvs: s.downloaded_csvs.into_iter().map(PolarDownloadedCsv::from).collect(),
+            downloaded_csvs: s
+                .downloaded_csvs
+                .into_iter()
+                .map(PolarDownloadedCsv::from)
+                .collect(),
             error: s.error,
             session_summary: s.session_summary.map(PolarSessionSummary::from),
         }
@@ -277,6 +296,17 @@ impl From<polar_engine::state::MorningResult> for PolarMorningResult {
     }
 }
 
+impl From<polar_engine::state::MorningCheckDiagnostics> for PolarMorningDiagnostics {
+    fn from(d: polar_engine::state::MorningCheckDiagnostics) -> Self {
+        Self {
+            raw_samples: d.raw_samples as u32,
+            warmup_discarded: d.warmup_discarded as u32,
+            flagged_samples: d.flagged_samples as u32,
+            valid_post_warmup: d.valid_post_warmup as u32,
+        }
+    }
+}
+
 impl From<polar_engine::state::DeviceOpsSnapshot> for PolarDeviceOpsState {
     fn from(s: polar_engine::state::DeviceOpsSnapshot) -> Self {
         Self {
@@ -294,6 +324,7 @@ impl From<polar_engine::state::MorningCheckSnapshot> for PolarMorningCheckState 
             elapsed_s: s.elapsed_s,
             hr_bpm: s.hr_bpm,
             ppi_count: s.ppi_count as u32,
+            diagnostics: s.diagnostics.map(PolarMorningDiagnostics::from),
             result: s.result.map(PolarMorningResult::from),
             error: s.error,
         }

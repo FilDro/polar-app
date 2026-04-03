@@ -100,8 +100,7 @@ pub fn compute_load_metrics(daily_trimps: &[(i32, f64)]) -> LoadMetrics {
     let acute_values: Vec<f64> = acute_slice.iter().map(|(_, t)| *t).collect();
     let acute_count = acute_values.len() as f64;
     let mean = acute_load / acute_count;
-    let variance =
-        acute_values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / acute_count;
+    let variance = acute_values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / acute_count;
     let sd = variance.sqrt();
 
     let monotony = if sd == 0.0 { 0.0 } else { mean / sd };
@@ -162,12 +161,12 @@ mod tests {
         // below_z1 = 0min
         // TRIMP = 30*1 + 15*2 + 5*3 + 3*4 + 1*5 = 30+30+15+12+5 = 92
         let dist = dist_from_seconds([
-            0.0,          // below Z1
-            30.0 * 60.0,  // Z1 = 1800s
-            15.0 * 60.0,  // Z2 = 900s
-            5.0 * 60.0,   // Z3 = 300s
-            3.0 * 60.0,   // Z4 = 180s
-            1.0 * 60.0,   // Z5 = 60s
+            0.0,         // below Z1
+            30.0 * 60.0, // Z1 = 1800s
+            15.0 * 60.0, // Z2 = 900s
+            5.0 * 60.0,  // Z3 = 300s
+            3.0 * 60.0,  // Z4 = 180s
+            1.0 * 60.0,  // Z5 = 60s
         ]);
         let trimp = edwards_trimp(&dist);
         assert_relative_eq!(trimp, 92.0);
@@ -344,8 +343,8 @@ mod tests {
     #[test]
     fn test_classify_acwr_boundaries() {
         // Exact boundary values
-        assert_eq!(classify_acwr(0.8), AcwrRisk::Optimal);  // lower bound of Optimal
-        assert_eq!(classify_acwr(1.3), AcwrRisk::Optimal);  // upper bound of Optimal
-        assert_eq!(classify_acwr(1.5), AcwrRisk::Elevated);  // upper bound of Elevated
+        assert_eq!(classify_acwr(0.8), AcwrRisk::Optimal); // lower bound of Optimal
+        assert_eq!(classify_acwr(1.3), AcwrRisk::Optimal); // upper bound of Optimal
+        assert_eq!(classify_acwr(1.5), AcwrRisk::Elevated); // upper bound of Elevated
     }
 }

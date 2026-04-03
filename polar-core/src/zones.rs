@@ -233,12 +233,12 @@ mod tests {
         // Z4: fraction [0.80, 0.90) => HR [167, 181) => use 175
         // Z5: fraction [0.90, 1.00] => HR [181, 195] => use 190
         let samples = vec![
-            (0.0, 50_u16),   // below Z1
-            (1.0, 130_u16),  // Z1
-            (2.0, 145_u16),  // Z2
-            (3.0, 160_u16),  // Z3
-            (4.0, 175_u16),  // Z4
-            (5.0, 190_u16),  // Z5
+            (0.0, 50_u16),  // below Z1
+            (1.0, 130_u16), // Z1
+            (2.0, 145_u16), // Z2
+            (3.0, 160_u16), // Z3
+            (4.0, 175_u16), // Z4
+            (5.0, 190_u16), // Z5
         ];
         let result = classify_hr_series(&samples, &cfg);
 
@@ -301,11 +301,7 @@ mod tests {
         let cfg = default_config();
         // Z1 HR = 130 (fraction ~0.5357)
         // Place two samples with a 5-second gap, then one at +1s
-        let samples = vec![
-            (0.0, 130_u16),
-            (5.0, 130_u16),
-            (6.0, 130_u16),
-        ];
+        let samples = vec![(0.0, 130_u16), (5.0, 130_u16), (6.0, 130_u16)];
         let result = classify_hr_series(&samples, &cfg);
 
         // First sample: dt = 5.0, second: dt = 1.0, last: dt = 1.0
