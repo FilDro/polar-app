@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/morning_check_screen.dart';
 import 'screens/sync_session_screen.dart';
+import 'screens/startup_screen.dart';
 import 'screens/dev_screen.dart';
 import 'screens/coach/coach_shell_screen.dart';
 import 'screens/coach/readiness_grid_screen.dart';
 import 'screens/coach/session_overview_screen.dart';
 import 'screens/coach/trends_screen.dart';
 import 'screens/coach/team_summary_screen.dart';
+import 'services/auth_service.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 final _shellNavigatorKey = GlobalKey<NavigatorState>();
@@ -19,13 +22,15 @@ final _shellNavigatorKey = GlobalKey<NavigatorState>();
 ///
 /// Route tree:
 /// ```
-///   / → ShellRoute (athlete tabs)
+///   /loading      → StartupScreen
+///   /auth         → AuthScreen
+///   / → ShellRoute (athlete tabs, authenticated only)
 ///     /home       → HomeScreen (tab 0)
 ///     /history    → HistoryScreen (tab 1)
 ///     /settings   → SettingsScreen (tab 2)
-///   /morning-check → MorningCheckScreen (push, full screen)
-///   /sync-session  → SyncSessionScreen (push, full screen)
-///   /dev           → DevShellScreen (existing debug screens)
+///   /morning-check → MorningCheckScreen (push, authenticated only)
+///   /sync-session  → SyncSessionScreen (push, authenticated only)
+///   /dev           → DevShellScreen (hidden in testing build)
 ///   /coach → ShellRoute (coach dashboard tabs)
 ///     /coach/readiness → ReadinessGridScreen (tab 0)
 ///     /coach/sessions  → SessionOverviewScreen (tab 1)
@@ -34,8 +39,24 @@ final _shellNavigatorKey = GlobalKey<NavigatorState>();
 /// ```
 final GoRouter appRouter = GoRouter(
   navigatorKey: _rootNavigatorKey,
-  initialLocation: '/home',
+  initialLocation: '/loading',
+  refreshListenable: AuthService.instance,
+  redirect: (context, state) {
+    final auth = AuthService.instance;
+    return resolveAppRedirect(
+      location: state.matchedLocation,
+      authReady: auth.ready,
+      authenticated: auth.isAuthenticated,
+      athleteAllowed: auth.canAccessAthleteApp,
+    );
+  },
   routes: [
+    GoRoute(
+      path: '/loading',
+      builder: (context, state) => const StartupScreen(),
+    ),
+    GoRoute(path: '/auth', builder: (context, state) => const AuthScreen()),
+
     // Athlete tab shell
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
@@ -130,6 +151,36 @@ final GoRouter appRouter = GoRouter(
     ),
   ],
 );
+
+String? resolveAppRedirect({
+  required String location,
+  required bool authReady,
+  required bool authenticated,
+  required bool athleteAllowed,
+}) {
+  final isLoading = location == '/loading';
+  final isAuth = location == '/auth';
+  final isHiddenTestingRoute =
+      location == '/dev' || location.startsWith('/coach');
+
+  if (!authReady) {
+    return isLoading ? null : '/loading';
+  }
+
+  if (!authenticated) {
+    return isAuth ? null : '/auth';
+  }
+
+  if (!athleteAllowed) {
+    return isAuth ? null : '/auth';
+  }
+
+  if (isLoading || isAuth || isHiddenTestingRoute) {
+    return '/home';
+  }
+
+  return null;
+}
 
 /// Shell widget for the athlete tab navigation.
 class _AthleteShell extends StatelessWidget {

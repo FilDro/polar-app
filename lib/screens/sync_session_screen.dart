@@ -1,6 +1,10 @@
+import 'dart:convert';
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../database/database.dart';
 import '../services/ble_service.dart';
+import '../services/cloud_sync_service.dart';
 import '../services/sync_service.dart';
 import '../services/athlete_service.dart';
 import '../src/rust/api/polar_api.dart' as bridge;
@@ -47,27 +51,95 @@ class _SyncSessionScreenState extends State<SyncSessionScreen> {
     if (mounted) {
       // Auto-process when sync completes
       if (_sync.syncComplete && _sync.sessionSummary == null) {
-        _sync.processSession(
-          hrMax: _athlete.hrMax,
-          hrRest: _athlete.hrRest,
-        );
+        _sync.processSession(hrMax: _athlete.hrMax, hrRest: _athlete.hrRest);
       }
       setState(() {});
     }
   }
 
-  void _onSave() {
-    // TODO: Store session in DB once Phase 4 is wired up
+  Future<void> _onSave() async {
     final summary = _sync.sessionSummary;
-    if (summary != null) {
+    if (summary == null) {
+      context.pop();
+      return;
+    }
+
+    final athleteId = _athlete.athleteId;
+    if (athleteId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Athlete profile unavailable. Please sign in again.'),
+        ),
+      );
+      return;
+    }
+
+    final startDt = DateTime.tryParse(summary.startTime) ?? DateTime.now();
+    final endDt = startDt.add(Duration(seconds: summary.durationS.round()));
+    final date = DateTime(startDt.year, startDt.month, startDt.day);
+
+    // Named-key zone maps — CoachDataService reads zones['z1'] etc. as Map keys
+    const zoneKeys = ['below_z1', 'z1', 'z2', 'z3', 'z4', 'z5'];
+    final zp = summary.zonePercent;
+    final zs = summary.zoneSeconds;
+    final zonePercentMap = {
+      for (var i = 0; i < zoneKeys.length; i++)
+        zoneKeys[i]: i < zp.length ? zp[i] : 0.0,
+    };
+    final zoneSecondsMap = {
+      for (var i = 0; i < zoneKeys.length; i++)
+        zoneKeys[i]: i < zs.length ? zs[i] : 0.0,
+    };
+
+    // 1. Persist locally to Drift
+    try {
+      await AppDatabase.instance.insertSession(
+        SessionEntriesCompanion.insert(
+          athleteId: athleteId,
+          date: date,
+          startTime: startDt,
+          endTime: Value(endDt),
+          durationS: summary.durationS.round(),
+          trimpEdwards: summary.trimpEdwards,
+          hrAvg: summary.hrAvg,
+          hrMax: summary.hrMax,
+          hrMin: summary.hrMin,
+          zoneSecondsJson: jsonEncode(zoneSecondsMap),
+          zonePercentJson: jsonEncode(zonePercentMap),
+          label: Value(_selectedLabel),
+        ),
+      );
+    } catch (e) {
+      debugPrint('SyncSession: Drift insert failed: $e');
+    }
+
+    // 2. Best-effort cloud upload
+    CloudSyncService.instance
+        .syncSession(
+          athleteId: athleteId,
+          date: date,
+          startTime: startDt,
+          endTime: endDt,
+          durationS: summary.durationS.round(),
+          trimpEdwards: summary.trimpEdwards,
+          hrAvg: summary.hrAvg.round(),
+          hrMax: summary.hrMax,
+          hrZones: {
+            'zone_seconds': zoneSecondsMap,
+            'zone_percent': zonePercentMap,
+          },
+        )
+        .then((ok) {
+          if (!ok) debugPrint('SyncSession: cloud sync skipped or failed');
+        });
+
+    if (mounted) {
       context.pop<Map<String, dynamic>>({
         'trimp': summary.trimpEdwards,
         'durationS': summary.durationS,
         'date': summary.startTime,
         'label': _selectedLabel,
       });
-    } else {
-      context.pop();
     }
   }
 
@@ -96,14 +168,16 @@ class _SyncSessionScreenState extends State<SyncSessionScreen> {
               _Banner('Connect a sensor first', colors.warning, colors),
 
             if (summary != null)
-              Expanded(child: _SummaryView(
-                summary: summary,
-                selectedLabel: _selectedLabel,
-                labels: _labels,
-                onLabelChanged: (l) => setState(() => _selectedLabel = l),
-                onSave: _onSave,
-                colors: colors,
-              ))
+              Expanded(
+                child: _SummaryView(
+                  summary: summary,
+                  selectedLabel: _selectedLabel,
+                  labels: _labels,
+                  onLabelChanged: (l) => setState(() => _selectedLabel = l),
+                  onSave: () => _onSave(),
+                  colors: colors,
+                ),
+              )
             else ...[
               // Sync button
               if (!isSyncing)
@@ -173,8 +247,11 @@ class _SyncSessionScreenState extends State<SyncSessionScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.info_outline,
-                          color: colors.textMuted, size: 48),
+                      Icon(
+                        Icons.info_outline,
+                        color: colors.textMuted,
+                        size: 48,
+                      ),
                       const SizedBox(height: KineSpacing.md),
                       Text(
                         'Sync complete, but no HR data was found.\nMake sure the sensor recorded a training session.',
@@ -379,8 +456,10 @@ class _Banner extends StatelessWidget {
         borderRadius: BorderRadius.circular(KineRadius.md),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: Text(text,
-          style: TextStyle(color: colors.textPrimary, fontSize: 13)),
+      child: Text(
+        text,
+        style: TextStyle(color: colors.textPrimary, fontSize: 13),
+      ),
     );
   }
 }

@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import '../services/ble_service.dart';
 import '../services/athlete_service.dart';
 import '../services/auth_service.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
-import '../theme/theme_notifier.dart';
 
-/// Settings tab — athlete profile, HR config, sensor, and dev tools link.
+/// Settings tab — athlete account, profile, HR config, and sensor pairing.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -47,148 +45,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _onChanged() {
-    if (mounted) setState(() {});
-  }
+    if (!mounted) return;
 
-  void _showSignInDialog() {
-    final emailCtrl = TextEditingController();
-    final passCtrl = TextEditingController();
+    if (_nameCtrl.text != _athlete.name) {
+      _nameCtrl.text = _athlete.name;
+    }
+    if (_hrMaxCtrl.text != '${_athlete.hrMax}') {
+      _hrMaxCtrl.text = '${_athlete.hrMax}';
+    }
+    if (_hrRestCtrl.text != '${_athlete.hrRest}') {
+      _hrRestCtrl.text = '${_athlete.hrRest}';
+    }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Sign In'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: emailCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Email',
-                border: OutlineInputBorder(),
-              ),
-              keyboardType: TextInputType.emailAddress,
-              autocorrect: false,
-            ),
-            const SizedBox(height: KineSpacing.sm),
-            TextField(
-              controller: passCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Password',
-                border: OutlineInputBorder(),
-              ),
-              obscureText: true,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final ok = await _auth.signIn(
-                email: emailCtrl.text.trim(),
-                password: passCtrl.text,
-              );
-              if (ctx.mounted) Navigator.of(ctx).pop();
-              if (!ok && mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(_auth.error)),
-                );
-              }
-            },
-            child: const Text('Sign In'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showSignUpDialog() {
-    final emailCtrl = TextEditingController();
-    final passCtrl = TextEditingController();
-    final nameCtrl = TextEditingController();
-    String selectedRole = 'athlete';
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Sign Up'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: KineSpacing.sm),
-              TextField(
-                controller: emailCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.emailAddress,
-                autocorrect: false,
-              ),
-              const SizedBox(height: KineSpacing.sm),
-              TextField(
-                controller: passCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  border: OutlineInputBorder(),
-                ),
-                obscureText: true,
-              ),
-              const SizedBox(height: KineSpacing.sm),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'athlete', label: Text('Athlete')),
-                  ButtonSegment(value: 'coach', label: Text('Coach')),
-                ],
-                selected: {selectedRole},
-                onSelectionChanged: (v) {
-                  setDialogState(() => selectedRole = v.first);
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final ok = await _auth.signUp(
-                  email: emailCtrl.text.trim(),
-                  password: passCtrl.text,
-                  name: nameCtrl.text.trim(),
-                  role: selectedRole,
-                );
-                if (ctx.mounted) Navigator.of(ctx).pop();
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(ok
-                          ? 'Account created. Check email to confirm.'
-                          : _auth.error),
-                    ),
-                  );
-                }
-              },
-              child: const Text('Sign Up'),
-            ),
-          ],
-        ),
-      ),
-    );
+    setState(() {});
   }
 
   @override
@@ -200,70 +69,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(KineSpacing.md),
         children: [
-          // Cloud Account section
-          _SectionHeader('Cloud Account', colors),
+          _SectionHeader('Account', colors),
           const SizedBox(height: KineSpacing.sm),
-          if (_auth.isAuthenticated) ...[
-            Card(
-              color: colors.surfaceCard,
-              child: Padding(
-                padding: const EdgeInsets.all(KineSpacing.md),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _auth.currentUser?.email ?? '',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: colors.textPrimary,
-                      ),
+          Card(
+            color: colors.surfaceCard,
+            child: Padding(
+              padding: const EdgeInsets.all(KineSpacing.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _auth.userEmail ?? '',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: colors.textPrimary,
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Role: ${_auth.userRole ?? 'unknown'}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Athlete account',
+                    style: TextStyle(fontSize: 12, color: colors.textSecondary),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: KineSpacing.sm),
-            OutlinedButton.icon(
-              onPressed: () async {
-                await _auth.signOut();
-              },
-              icon: const Icon(Icons.logout),
-              label: const Text('Sign Out'),
-            ),
-          ] else ...[
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _showSignInDialog,
-                    icon: const Icon(Icons.login),
-                    label: const Text('Sign In'),
-                  ),
-                ),
-                const SizedBox(width: KineSpacing.sm),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _showSignUpDialog,
-                    icon: const Icon(Icons.person_add),
-                    label: const Text('Sign Up'),
-                  ),
-                ),
-              ],
-            ),
-          ],
+          ),
 
           const SizedBox(height: KineSpacing.lg),
 
-          // Profile section
           _SectionHeader('Profile', colors),
           const SizedBox(height: KineSpacing.sm),
           TextField(
@@ -277,34 +111,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: KineSpacing.lg),
 
-          // Appearance section
-          _SectionHeader('Appearance', colors),
-          const SizedBox(height: KineSpacing.sm),
-          ValueListenableBuilder<AppTheme>(
-            valueListenable: ThemeNotifier.instance,
-            builder: (context, appTheme, _) => SegmentedButton<AppTheme>(
-              segments: const [
-                ButtonSegment(
-                  value: AppTheme.kineApp,
-                  label: Text('KINE'),
-                ),
-                ButtonSegment(
-                  value: AppTheme.dark,
-                  label: Text('Dark'),
-                ),
-                ButtonSegment(
-                  value: AppTheme.kineFlow,
-                  label: Text('KineFlow'),
-                ),
-              ],
-              selected: {appTheme},
-              onSelectionChanged: (v) => ThemeNotifier.instance.setTheme(v.first),
-            ),
-          ),
-
-          const SizedBox(height: KineSpacing.lg),
-
-          // HR Configuration
           _SectionHeader('Heart Rate Configuration', colors),
           const SizedBox(height: KineSpacing.sm),
           Row(
@@ -345,7 +151,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: KineSpacing.lg),
 
-          // Sensor section
           _SectionHeader('Sensor', colors),
           const SizedBox(height: KineSpacing.sm),
           Card(
@@ -413,7 +218,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             label: Text(_ble.isScanning ? 'Scanning...' : 'Pair Sensor'),
           ),
 
-          // Show discovered devices for quick connect
           if (_ble.devices.isNotEmpty) ...[
             const SizedBox(height: KineSpacing.sm),
             ...List.generate(_ble.devices.length, (i) {
@@ -439,20 +243,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: KineSpacing.xl),
 
-          // Coach dashboard link
           FilledButton.icon(
-            onPressed: () => context.go('/coach/readiness'),
-            icon: const Icon(Icons.dashboard),
-            label: const Text('Coach Dashboard'),
-          ),
-
-          const SizedBox(height: KineSpacing.sm),
-
-          // Developer tools link
-          OutlinedButton.icon(
-            onPressed: () => context.push('/dev'),
-            icon: const Icon(Icons.developer_mode),
-            label: const Text('Developer Tools'),
+            onPressed: _auth.loading
+                ? null
+                : () async {
+                    await _auth.signOut();
+                  },
+            icon: const Icon(Icons.logout),
+            label: const Text('Sign Out'),
           ),
         ],
       ),

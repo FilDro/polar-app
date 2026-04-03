@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../database/database.dart';
+import '../services/athlete_service.dart';
 import '../services/ble_service.dart';
 import '../theme/colors.dart';
 import '../theme/spacing.dart';
@@ -16,11 +18,9 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _ble = BleService.instance;
 
-  // TODO: Replace with DB-backed state once Phase 4 is wired up
   String? _todayReadiness;
   double? _todayLnRmssd;
   double? _todayRestingHr;
-  // Last session
   double? _lastTrimp;
   double? _lastDurationS;
   String? _lastSessionDate;
@@ -29,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _ble.addListener(_onChanged);
+    _loadTodayData();
   }
 
   @override
@@ -41,11 +42,43 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted) setState(() {});
   }
 
+  Future<void> _loadTodayData() async {
+    final athleteId = AthleteService.instance.athleteId;
+    if (athleteId == null) return;
+    final db = AppDatabase.instance;
+    final wellness = await db.getTodayWellness(athleteId);
+    final session = await db.getLastSession(athleteId);
+    if (!mounted) return;
+    setState(() {
+      if (wellness != null) {
+        if (_isUsableReadiness(wellness.readiness)) {
+          _todayReadiness = wellness.readiness;
+          _todayLnRmssd = wellness.lnRmssd;
+          _todayRestingHr = wellness.restingHr.toDouble();
+        } else {
+          _todayReadiness = null;
+          _todayLnRmssd = null;
+          _todayRestingHr = null;
+        }
+      }
+      if (session != null) {
+        _lastTrimp = session.trimpEdwards;
+        _lastDurationS = session.durationS.toDouble();
+        final d = session.date;
+        _lastSessionDate =
+            '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+      }
+    });
+  }
+
   /// Called when returning from the morning check screen with a result.
   void _onMorningCheckResult(Map<String, dynamic>? result) {
     if (result == null) return;
+    final readiness = result['readiness'] as String?;
+    if (!_isUsableReadiness(readiness)) return;
+
     setState(() {
-      _todayReadiness = result['readiness'] as String?;
+      _todayReadiness = readiness;
       _todayLnRmssd = result['lnRmssd'] as double?;
       _todayRestingHr = result['restingHr'] as double?;
     });
@@ -64,7 +97,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = KineColors.of(context);
-    final hasCheckToday = _todayReadiness != null;
+    final hasCheckToday = _isUsableReadiness(_todayReadiness);
     final hasSession = _lastTrimp != null;
 
     return Scaffold(
@@ -105,9 +138,7 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Readiness section
-            Center(
-              child: ReadinessIndicator(readiness: _todayReadiness),
-            ),
+            Center(child: ReadinessIndicator(readiness: _todayReadiness)),
             const SizedBox(height: KineSpacing.lg),
 
             if (hasCheckToday) ...[
@@ -150,8 +181,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.all(KineSpacing.md),
                   child: Row(
                     children: [
-                      Icon(Icons.directions_run,
-                          color: colors.textMuted, size: 32),
+                      Icon(
+                        Icons.directions_run,
+                        color: colors.textMuted,
+                        size: 32,
+                      ),
                       const SizedBox(width: KineSpacing.inset),
                       Expanded(
                         child: Text(
@@ -186,6 +220,14 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  bool _isUsableReadiness(String? readiness) {
+    final normalized = readiness?.trim().toLowerCase();
+    return normalized == 'green' ||
+        normalized == 'amber' ||
+        normalized == 'red' ||
+        normalized == 'building';
   }
 }
 
@@ -223,8 +265,7 @@ class _WellnessCard extends StatelessWidget {
             Row(
               children: [
                 _Metric('lnRMSSD', lnRmssd.toStringAsFixed(2), colors),
-                _Metric(
-                    'Resting HR', '${restingHr.round()} bpm', colors),
+                _Metric('Resting HR', '${restingHr.round()} bpm', colors),
                 _Metric('Readiness', readiness.toUpperCase(), colors),
               ],
             ),
@@ -311,10 +352,7 @@ class _Metric extends StatelessWidget {
             ),
           ),
           const SizedBox(height: KineSpacing.xs),
-          Text(
-            label,
-            style: TextStyle(fontSize: 11, color: colors.textMuted),
-          ),
+          Text(label, style: TextStyle(fontSize: 11, color: colors.textMuted)),
         ],
       ),
     );

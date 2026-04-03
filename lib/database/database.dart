@@ -26,8 +26,8 @@ class DailyWellnessEntries extends Table {
 
   @override
   List<Set<Column>> get uniqueKeys => [
-        {athleteId, date},
-      ];
+    {athleteId, date},
+  ];
 }
 
 class SessionEntries extends Table {
@@ -53,11 +53,9 @@ class Athletes extends Table {
   TextColumn get sensorId => text().nullable()(); // Polar device ID
   IntColumn get hrMax => integer().nullable()();
   IntColumn get hrRest => integer().nullable()();
-  TextColumn get zoneConfigJson =>
-      text().withDefault(const Constant('{}'))();
+  TextColumn get zoneConfigJson => text().withDefault(const Constant('{}'))();
   DateTimeColumn get dateOfBirth => dateTime().nullable()();
-  DateTimeColumn get createdAt =>
-      dateTime().withDefault(currentDateAndTime)();
+  DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
 
   @override
   Set<Column> get primaryKey => {id};
@@ -86,8 +84,10 @@ class AppDatabase extends _$AppDatabase {
   }
 
   /// Get the baseline lnRMSSD values for the last N days (excluding today).
-  Future<List<double>> getBaselineHistory(String athleteId,
-      {int days = 60}) async {
+  Future<List<double>> getBaselineHistory(
+    String athleteId, {
+    int days = 60,
+  }) async {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final cutoff = today.subtract(Duration(days: days));
@@ -148,7 +148,9 @@ class AppDatabase extends _$AppDatabase {
 
   /// Get sessions for a specific date.
   Future<List<SessionEntry>> getSessionsForDate(
-      String athleteId, DateTime date) async {
+    String athleteId,
+    DateTime date,
+  ) async {
     final dayStart = DateTime(date.year, date.month, date.day);
     final dayEnd = dayStart.add(const Duration(days: 1));
 
@@ -189,6 +191,15 @@ class AppDatabase extends _$AppDatabase {
   /// Get the active athlete (first athlete in the DB for V1 single-user mode).
   Future<Athlete?> getActiveAthlete() async {
     final query = select(athletes)..limit(1);
+    final rows = await query.get();
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// Get a specific athlete by id.
+  Future<Athlete?> getAthleteById(String athleteId) async {
+    final query = select(athletes)
+      ..where((t) => t.id.equals(athleteId))
+      ..limit(1);
     final rows = await query.get();
     return rows.isEmpty ? null : rows.first;
   }
