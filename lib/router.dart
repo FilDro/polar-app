@@ -48,6 +48,7 @@ final GoRouter appRouter = GoRouter(
       authReady: auth.ready,
       authenticated: auth.isAuthenticated,
       athleteAllowed: auth.canAccessAthleteApp,
+      isCoach: auth.isCoach,
     );
   },
   routes: [
@@ -157,11 +158,18 @@ String? resolveAppRedirect({
   required bool authReady,
   required bool authenticated,
   required bool athleteAllowed,
+  required bool isCoach,
 }) {
   final isLoading = location == '/loading';
   final isAuth = location == '/auth';
-  final isHiddenTestingRoute =
-      location == '/dev' || location.startsWith('/coach');
+  final isCoachRoute = location.startsWith('/coach');
+  final isAthleteRoute =
+      location == '/home' ||
+      location == '/history' ||
+      location == '/settings' ||
+      location == '/morning-check' ||
+      location == '/sync-session';
+  final isHiddenTestingRoute = location == '/dev';
 
   if (!authReady) {
     return isLoading ? null : '/loading';
@@ -171,12 +179,24 @@ String? resolveAppRedirect({
     return isAuth ? null : '/auth';
   }
 
+  if (isCoach) {
+    if (isCoachRoute) {
+      return null;
+    }
+
+    return '/coach/readiness';
+  }
+
   if (!athleteAllowed) {
     return isAuth ? null : '/auth';
   }
 
-  if (isLoading || isAuth || isHiddenTestingRoute) {
+  if (isLoading || isAuth || isCoachRoute || isHiddenTestingRoute) {
     return '/home';
+  }
+
+  if (isAthleteRoute) {
+    return null;
   }
 
   return null;

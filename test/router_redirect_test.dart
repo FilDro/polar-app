@@ -10,6 +10,7 @@ void main() {
           authReady: false,
           authenticated: false,
           athleteAllowed: false,
+          isCoach: false,
         ),
         '/loading',
       );
@@ -22,6 +23,7 @@ void main() {
           authReady: true,
           authenticated: false,
           athleteAllowed: false,
+          isCoach: false,
         ),
         '/auth',
       );
@@ -34,6 +36,7 @@ void main() {
           authReady: true,
           authenticated: false,
           athleteAllowed: false,
+          isCoach: false,
         ),
         isNull,
       );
@@ -46,6 +49,7 @@ void main() {
           authReady: true,
           authenticated: true,
           athleteAllowed: true,
+          isCoach: false,
         ),
         '/home',
       );
@@ -58,6 +62,7 @@ void main() {
           authReady: true,
           authenticated: true,
           athleteAllowed: true,
+          isCoach: false,
         ),
         '/home',
       );
@@ -67,6 +72,7 @@ void main() {
           authReady: true,
           authenticated: true,
           athleteAllowed: true,
+          isCoach: false,
         ),
         '/home',
       );
@@ -79,8 +85,48 @@ void main() {
           authReady: true,
           authenticated: true,
           athleteAllowed: true,
+          isCoach: false,
         ),
         isNull,
+      );
+    });
+
+    test('sends authenticated coaches from auth to coach home', () {
+      expect(
+        resolveAppRedirect(
+          location: '/auth',
+          authReady: true,
+          authenticated: true,
+          athleteAllowed: false,
+          isCoach: true,
+        ),
+        '/coach/readiness',
+      );
+    });
+
+    test('keeps authenticated coaches on coach routes', () {
+      expect(
+        resolveAppRedirect(
+          location: '/coach/readiness',
+          authReady: true,
+          authenticated: true,
+          athleteAllowed: false,
+          isCoach: true,
+        ),
+        isNull,
+      );
+    });
+
+    test('redirects coaches away from athlete routes', () {
+      expect(
+        resolveAppRedirect(
+          location: '/home',
+          authReady: true,
+          authenticated: true,
+          athleteAllowed: false,
+          isCoach: true,
+        ),
+        '/coach/readiness',
       );
     });
   });

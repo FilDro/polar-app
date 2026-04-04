@@ -3,6 +3,13 @@
 // These mirror the Supabase schema but are plain Dart objects
 // for UI consumption. No ORM or code generation needed.
 
+class TeamInfo {
+  final String id;
+  final String name;
+
+  const TeamInfo({required this.id, required this.name});
+}
+
 class AthleteReadiness {
   final String athleteId;
   final String name;
@@ -10,6 +17,7 @@ class AthleteReadiness {
   final int restingHr;
   final double lnRmssd;
   final bool hasData;
+  final List<double> last7LnRmssd;
 
   const AthleteReadiness({
     required this.athleteId,
@@ -18,15 +26,16 @@ class AthleteReadiness {
     required this.restingHr,
     required this.lnRmssd,
     required this.hasData,
+    this.last7LnRmssd = const [],
   });
 
   /// Sort priority: red=0, amber=1, green=2, missing=3.
   int get sortPriority => switch (readiness) {
-        'red' => 0,
-        'amber' => 1,
-        'green' => 2,
-        _ => 3,
-      };
+    'red' => 0,
+    'amber' => 1,
+    'green' => 2,
+    _ => 3,
+  };
 }
 
 class AthleteSession {
@@ -111,15 +120,12 @@ class TeamAlert {
   final String message;
   final String priority; // high, medium, low
 
-  const TeamAlert({
-    required this.message,
-    required this.priority,
-  });
+  const TeamAlert({required this.message, required this.priority});
 
   int get sortPriority => switch (priority) {
-        'high' => 0,
-        'medium' => 1,
-        'low' => 2,
-        _ => 3,
-      };
+    'high' => 0,
+    'medium' => 1,
+    'low' => 2,
+    _ => 3,
+  };
 }

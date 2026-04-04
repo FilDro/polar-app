@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:kine_charts/kine_charts.dart';
 import '../../models/coach_models.dart';
 import '../../services/coach_data_service.dart';
 import '../../theme/colors.dart';
 import '../../theme/spacing.dart';
+import '../../widgets/app_kine_chart_theme.dart';
 import '../../widgets/readiness_indicator.dart';
 
 /// PRD 8.1 — Morning readiness grid showing all athletes' status.
@@ -136,11 +138,10 @@ class _ReadinessGridScreenState extends State<ReadinessGridScreen> {
               maxCrossAxisExtent: 180,
               mainAxisSpacing: KineSpacing.gap,
               crossAxisSpacing: KineSpacing.gap,
-              childAspectRatio: 0.9,
+              childAspectRatio: 0.82,
             ),
             delegate: SliverChildBuilderDelegate(
-              (context, index) =>
-                  _AthleteReadinessCard(data: readiness[index]),
+              (context, index) => _AthleteReadinessCard(data: readiness[index]),
               childCount: readiness.length,
             ),
           ),
@@ -191,12 +192,27 @@ class _ReadinessGridScreenState extends State<ReadinessGridScreen> {
 
   String _formatDate(DateTime d) {
     const days = [
-      'Monday', 'Tuesday', 'Wednesday', 'Thursday',
-      'Friday', 'Saturday', 'Sunday',
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
     ];
     const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
     ];
     return '${days[d.weekday - 1]} ${d.day} ${months[d.month - 1]} ${d.year}';
   }
@@ -231,7 +247,7 @@ class _AthleteReadinessCard extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.all(KineSpacing.inset),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Name
               Text(
@@ -248,17 +264,19 @@ class _AthleteReadinessCard extends StatelessWidget {
               const SizedBox(height: KineSpacing.sm),
 
               // Readiness dot
-              ReadinessDot(
-                readiness: data.hasData ? data.readiness : null,
-                size: 28,
+              Align(
+                alignment: Alignment.center,
+                child: ReadinessDot(
+                  readiness: data.hasData ? data.readiness : null,
+                  size: 28,
+                ),
               ),
 
               const SizedBox(height: KineSpacing.sm),
 
               if (data.hasData) ...[
-                // Resting HR
                 Text(
-                  'HR: ${data.restingHr}',
+                  'HR ${data.restingHr} bpm',
                   style: TextStyle(
                     fontSize: 12,
                     color: colors.textSecondary,
@@ -266,9 +284,8 @@ class _AthleteReadinessCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                // lnRMSSD
                 Text(
-                  data.lnRmssd.toStringAsFixed(2),
+                  'lnRMSSD ${data.lnRmssd.toStringAsFixed(2)}',
                   style: TextStyle(
                     fontSize: 12,
                     color: colors.textMuted,
@@ -277,16 +294,62 @@ class _AthleteReadinessCard extends StatelessWidget {
                 ),
               ] else
                 Text(
-                  'no data',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.textMuted,
-                  ),
+                  'No data today',
+                  style: TextStyle(fontSize: 12, color: colors.textMuted),
                 ),
+              const Spacer(),
+              Text(
+                '7d lnRMSSD',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: colors.textMuted,
+                ),
+              ),
+              const SizedBox(height: KineSpacing.xs),
+              SizedBox(
+                height: 40,
+                width: double.infinity,
+                child: _buildSparkline(colors),
+              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildSparkline(KineColors colors) {
+    if (data.last7LnRmssd.isEmpty) {
+      return Center(
+        child: Text(
+          'No trend yet',
+          style: TextStyle(fontSize: 10, color: colors.textMuted),
+        ),
+      );
+    }
+
+    return AppKineChartTheme(
+      child: SparklineChart(
+        data: SparklineData(
+          values: data.last7LnRmssd,
+          color: _sparklineColor(colors),
+          lineWidth: 2.0,
+          showArea: true,
+          areaAlpha: 24,
+          showEndDot: true,
+          dotRadius: 2.3,
+        ),
+      ),
+    );
+  }
+
+  Color _sparklineColor(KineColors colors) {
+    return switch (data.readiness.toLowerCase()) {
+      'green' => KineColors.green2,
+      'amber' => KineColors.yellow0,
+      'red' => KineColors.red3,
+      _ => colors.textMuted,
+    };
   }
 }

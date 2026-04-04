@@ -23,6 +23,8 @@ dependencies:
   sqlite3_flutter_libs: ^0.5.0
   path: ^1.9.0
   supabase_flutter: ^2.8.0
+  kine_charts:
+    path: ../kine_charts
 
   rust_lib_polar_app:
     path: rust_builder

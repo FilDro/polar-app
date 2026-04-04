@@ -27,6 +27,7 @@ class AuthService extends ChangeNotifier {
   bool get initialized => _initialized;
   bool get ready => _initialized && !_sessionSyncInProgress;
   bool get canAccessAthleteApp => isAuthenticated && !isCoach;
+  bool get canAccessCoachApp => isAuthenticated && isCoach;
 
   String? get userRole {
     return currentUser?.userMetadata?['role'] as String?;
@@ -73,11 +74,12 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Sign up with email, password, and name for the athlete testing build.
+  /// Sign up with email, password, name, and role metadata.
   Future<bool> signUp({
     required String email,
     required String password,
     required String name,
+    String role = 'athlete',
   }) async {
     final client = _client;
     if (client == null) {
@@ -91,10 +93,11 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final normalizedRole = role == 'coach' ? 'coach' : 'athlete';
       await client.auth.signUp(
         email: email,
         password: password,
-        data: {'name': name, 'role': 'athlete'},
+        data: {'name': name, 'role': normalizedRole},
       );
 
       // Testing build assumes email confirmation is disabled, but sign in
@@ -104,7 +107,7 @@ class AuthService extends ChangeNotifier {
       }
 
       await _syncSession(client.auth.currentSession);
-      return canAccessAthleteApp;
+      return canAccessAthleteApp || canAccessCoachApp;
     } on AuthException catch (e) {
       _error = e.message;
       return false;
@@ -134,7 +137,7 @@ class AuthService extends ChangeNotifier {
       await client.auth.signInWithPassword(email: email, password: password);
 
       await _syncSession(client.auth.currentSession);
-      return canAccessAthleteApp;
+      return canAccessAthleteApp || canAccessCoachApp;
     } on AuthException catch (e) {
       _error = e.message;
       return false;
@@ -161,21 +164,30 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> _syncSession(Session? session) async {
+    if (_sessionSyncInProgress) return;
     _sessionSyncInProgress = true;
     notifyListeners();
 
     try {
       if (session == null) {
+        _error = '';
         AthleteService.instance.clear();
         return;
       }
 
-      if (!_supportsAthleteSession(session)) {
-        _error = 'This testing build supports athlete accounts only.';
+      if (!_supportsAppSession(session)) {
+        _error = 'This build supports athlete and coach accounts only.';
         try {
           await _client?.auth.signOut();
         } catch (_) {}
         AthleteService.instance.clear();
+        return;
+      }
+
+      if (_roleForSession(session) == 'coach') {
+        AthleteService.instance.clear();
+        await _ensureCoachProfile(session.user);
+        _error = '';
         return;
       }
 
@@ -187,8 +199,9 @@ class AuthService extends ChangeNotifier {
         CloudSyncService.instance.pullWellness(uid),
         CloudSyncService.instance.pullSessions(uid),
       ]);
+      _error = '';
     } catch (e) {
-      _error = 'Failed to load athlete profile. Please sign in again.';
+      _error = 'Failed to load your profile. Please sign in again.';
       debugPrint('AuthService session sync failed: $e');
       try {
         await _client?.auth.signOut();
@@ -204,8 +217,73 @@ class AuthService extends ChangeNotifier {
     return session.user.userMetadata?['role'] as String?;
   }
 
-  bool _supportsAthleteSession(Session session) {
+  bool _supportsAppSession(Session session) {
     final role = _roleForSession(session);
-    return role == null || role == 'athlete';
+    return role == null || role == 'athlete' || role == 'coach';
+  }
+
+  Future<void> _ensureCoachProfile(User user) async {
+    final client = _client;
+    if (client == null) {
+      throw StateError('Not connected to cloud');
+    }
+
+    final email = user.email?.trim();
+    if (email == null || email.isEmpty) {
+      throw StateError('Coach account is missing an email address.');
+    }
+
+    final coachName = _displayNameForUser(user, fallback: 'Coach');
+
+    await client.from('coaches').upsert({
+      'id': user.id,
+      'name': coachName,
+      'email': email,
+    }, onConflict: 'id');
+
+    final coachRow = await client
+        .from('coaches')
+        .select('team_id')
+        .eq('id', user.id)
+        .maybeSingle();
+
+    final existingTeamId = coachRow?['team_id'] as String?;
+    if (existingTeamId != null && existingTeamId.isNotEmpty) {
+      return;
+    }
+
+    final createdTeam = await client
+        .from('teams')
+        .insert({'name': _defaultTeamNameForCoach(coachName)})
+        .select('id')
+        .single();
+
+    final teamId = createdTeam['id'] as String?;
+    if (teamId == null || teamId.isEmpty) {
+      throw StateError('Coach team creation returned no team id.');
+    }
+
+    await client.from('coaches').update({'team_id': teamId}).eq('id', user.id);
+  }
+
+  String _displayNameForUser(User user, {required String fallback}) {
+    final metadataName = user.userMetadata?['name'];
+    if (metadataName is String && metadataName.trim().isNotEmpty) {
+      return metadataName.trim();
+    }
+
+    final email = user.email?.trim();
+    if (email != null && email.isNotEmpty) {
+      final localPart = email.split('@').first.trim();
+      if (localPart.isNotEmpty) {
+        return localPart;
+      }
+    }
+
+    return fallback;
+  }
+
+  String _defaultTeamNameForCoach(String coachName) {
+    return '$coachName Team';
   }
 }

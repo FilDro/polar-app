@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:kine_charts/kine_charts.dart';
+
 import '../../models/coach_models.dart';
 import '../../services/coach_data_service.dart';
 import '../../theme/colors.dart';
 import '../../theme/spacing.dart';
+import '../../widgets/app_kine_chart_theme.dart';
 import '../../widgets/readiness_indicator.dart';
 
 /// PRD 8.3 — Per-athlete longitudinal load trends with ACWR.
@@ -15,7 +18,11 @@ class TrendsScreen extends StatefulWidget {
 
 class _TrendsScreenState extends State<TrendsScreen> {
   final _service = CoachDataService.instance;
+  final GlobalKey<BarChartState> _trimpChartKey = GlobalKey<BarChartState>();
+  final GlobalKey<LineChartState> _hrvChartKey = GlobalKey<LineChartState>();
 
+  Object? _trimpChartToken;
+  Object? _hrvChartToken;
   String? _selectedAthleteId;
   int _periodDays = 28;
 
@@ -78,14 +85,10 @@ class _TrendsScreenState extends State<TrendsScreen> {
     return ListView(
       padding: const EdgeInsets.all(KineSpacing.md),
       children: [
-        // Athlete selector
         _buildAthleteSelector(colors),
         const SizedBox(height: KineSpacing.md),
-
-        // Period selector
         _buildPeriodSelector(colors),
         const SizedBox(height: KineSpacing.md),
-
         if (_service.error.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(bottom: KineSpacing.sm),
@@ -94,7 +97,6 @@ class _TrendsScreenState extends State<TrendsScreen> {
               style: TextStyle(fontSize: 12, color: colors.warning),
             ),
           ),
-
         if (_selectedAthleteId == null)
           _emptyState(colors)
         else if (_service.loading && _service.currentTrend == null)
@@ -121,8 +123,8 @@ class _TrendsScreenState extends State<TrendsScreen> {
         border: const OutlineInputBorder(),
         labelStyle: TextStyle(color: colors.textSecondary),
       ),
-      items: roster.map((a) {
-        return DropdownMenuItem(value: a.id, child: Text(a.name));
+      items: roster.map((athlete) {
+        return DropdownMenuItem(value: athlete.id, child: Text(athlete.name));
       }).toList(),
       onChanged: (id) {
         setState(() => _selectedAthleteId = id);
@@ -156,11 +158,11 @@ class _TrendsScreenState extends State<TrendsScreen> {
 
   Widget _buildTrendContent(KineColors colors) {
     final trend = _service.currentTrend!;
+    final windowDays = _trendWindow(trend);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Title
         Text(
           'Load Trends — ${trend.name}',
           style: TextStyle(
@@ -174,31 +176,21 @@ class _TrendsScreenState extends State<TrendsScreen> {
           style: TextStyle(fontSize: 13, color: colors.textMuted),
         ),
         const SizedBox(height: KineSpacing.lg),
-
-        // ACWR / Monotony / Strain metrics
         _buildMetricsRow(trend, colors),
         const SizedBox(height: KineSpacing.lg),
-
-        // Readiness streak (last 7 days)
         _buildReadinessStreak(trend, colors),
         const SizedBox(height: KineSpacing.lg),
-
-        // TRIMP daily values
         _buildSection('TRIMP (daily)', colors),
         const SizedBox(height: KineSpacing.sm),
-        _buildTrimpBars(trend, colors),
+        _buildTrimpChart(windowDays, colors),
         const SizedBox(height: KineSpacing.lg),
-
-        // lnRMSSD daily values
         _buildSection('lnRMSSD (morning)', colors),
         const SizedBox(height: KineSpacing.sm),
-        _buildHrvValues(trend, colors),
+        _buildHrvChart(windowDays, colors),
         const SizedBox(height: KineSpacing.lg),
-
-        // Resting HR
         _buildSection('Resting HR', colors),
         const SizedBox(height: KineSpacing.sm),
-        _buildRestingHrValues(trend, colors),
+        _buildRestingHrSparkline(windowDays, colors),
       ],
     );
   }
@@ -214,16 +206,41 @@ class _TrendsScreenState extends State<TrendsScreen> {
         children: [
           Row(
             children: [
-              _metricTile('ACWR', _formatAcwr(trend.acwr), _acwrColor(trend.acwr), colors),
-              _metricTile('Monotony', trend.monotony?.toStringAsFixed(1) ?? '—', null, colors),
-              _metricTile('Strain', trend.strain?.toStringAsFixed(0) ?? '—', null, colors),
+              _metricTile(
+                'ACWR',
+                _formatAcwr(trend.acwr),
+                _acwrColor(trend.acwr),
+                colors,
+              ),
+              _metricTile(
+                'Monotony',
+                trend.monotony?.toStringAsFixed(1) ?? '—',
+                null,
+                colors,
+              ),
+              _metricTile(
+                'Strain',
+                trend.strain?.toStringAsFixed(0) ?? '—',
+                null,
+                colors,
+              ),
             ],
           ),
           const SizedBox(height: KineSpacing.sm),
           Row(
             children: [
-              _metricTile('Acute', trend.acuteLoad.toStringAsFixed(0), null, colors),
-              _metricTile('Chronic', trend.chronicLoad.toStringAsFixed(0), null, colors),
+              _metricTile(
+                'Acute',
+                trend.acuteLoad.toStringAsFixed(0),
+                null,
+                colors,
+              ),
+              _metricTile(
+                'Chronic',
+                trend.chronicLoad.toStringAsFixed(0),
+                null,
+                colors,
+              ),
               const Expanded(child: SizedBox()),
             ],
           ),
@@ -232,7 +249,12 @@ class _TrendsScreenState extends State<TrendsScreen> {
     );
   }
 
-  Widget _metricTile(String label, String value, Color? valueColor, KineColors colors) {
+  Widget _metricTile(
+    String label,
+    String value,
+    Color? valueColor,
+    KineColors colors,
+  ) {
     return Expanded(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -302,10 +324,7 @@ class _TrendsScreenState extends State<TrendsScreen> {
               padding: const EdgeInsets.only(right: KineSpacing.sm),
               child: Column(
                 children: [
-                  ReadinessDot(
-                    readiness: day.readiness,
-                    size: 20,
-                  ),
+                  ReadinessDot(readiness: day.readiness, size: 20),
                   const SizedBox(height: 2),
                   Text(
                     _weekdayShort(day.date),
@@ -331,134 +350,334 @@ class _TrendsScreenState extends State<TrendsScreen> {
     );
   }
 
-  /// Simple horizontal bar chart for TRIMP values using Container widgets.
-  Widget _buildTrimpBars(AthleteTrend trend, KineColors colors) {
-    final daysWithTrimp =
-        trend.days.where((d) => d.trimp != null).toList();
+  Widget _buildTrimpChart(List<AthleteTrendDay> windowDays, KineColors colors) {
+    final values = windowDays.map((day) => day.trimp ?? 0.0).toList();
+    final hasSessionData = values.any((value) => value > 0);
 
-    if (daysWithTrimp.isEmpty) {
+    if (!hasSessionData) {
       return Text('No session data', style: TextStyle(color: colors.textMuted));
     }
 
-    final maxTrimp =
-        daysWithTrimp.fold(0.0, (m, d) => d.trimp! > m ? d.trimp! : m);
-    if (maxTrimp <= 0) {
-      return Text('No session data', style: TextStyle(color: colors.textMuted));
+    final entries = <BarChartDataEntry>[];
+    final barColors = <Color>[];
+    for (var index = 0; index < windowDays.length; index++) {
+      final value = values[index];
+      entries.add(BarChartDataEntry(x: index.toDouble(), y: value));
+      barColors.add(_trimpColor(value));
     }
 
-    return Column(
-      children: daysWithTrimp.map((day) {
-        final fraction = day.trimp! / maxTrimp;
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 3),
-          child: Row(
-            children: [
-              SizedBox(
-                width: 42,
-                child: Text(
-                  _shortDate(day.date),
+    final dataSet = BarDataSet(entries, label: 'TRIMP')
+      ..colors = barColors
+      ..cornerRadius = 6;
+    final data = BarData([dataSet])
+      ..barWidth = windowDays.length > 14 ? 0.58 : 0.72;
+
+    _configureTrimpChart(windowDays);
+
+    return _buildChartCard(
+      colors: colors,
+      height: 160,
+      child: AppKineChartTheme(
+        child: BarChart(key: _trimpChartKey, data: data, touchEnabled: false),
+      ),
+    );
+  }
+
+  Widget _buildHrvChart(List<AthleteTrendDay> windowDays, KineColors colors) {
+    final entries = <ChartDataEntry>[];
+    for (var index = 0; index < windowDays.length; index++) {
+      final value = windowDays[index].lnRmssd;
+      if (value != null) {
+        entries.add(ChartDataEntry(x: index.toDouble(), y: value));
+      }
+    }
+
+    if (entries.isEmpty) {
+      return Text('No HRV data', style: TextStyle(color: colors.textMuted));
+    }
+
+    final mean =
+        entries.fold<double>(0.0, (sum, entry) => sum + entry.y) /
+        entries.length;
+    final lineColor = KineColors.green2;
+    final dataSet = LineDataSet(entries, label: 'lnRMSSD')
+      ..mode = LineDataSetMode.cubicBezier
+      ..cubicIntensity = 0.18
+      ..lineWidth = 2.4
+      ..colors = [lineColor]
+      ..circleColors = [lineColor]
+      ..circleHoleColor = colors.surfaceCard
+      ..circleRadius = entries.length <= 14 ? 3.0 : 2.4
+      ..circleHoleRadius = 1.5
+      ..drawCirclesEnabled = entries.length <= 14
+      ..drawFilledEnabled = entries.length > 1
+      ..fillGradient = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          lineColor.withValues(alpha: 0.28),
+          lineColor.withValues(alpha: 0.0),
+        ],
+      );
+
+    _configureHrvChart(windowDays);
+
+    return _buildChartCard(
+      colors: colors,
+      height: 120,
+      child: AppKineChartTheme(
+        child: LineChart(
+          key: _hrvChartKey,
+          data: LineData([dataSet]),
+          touchEnabled: false,
+          annotations: [
+            HLineAnnotation(
+              y: mean,
+              color: colors.textMuted.withValues(alpha: 0.85),
+              lineWidth: 1.0,
+              dashPattern: const [4.0, 3.0],
+              label: 'Baseline ${mean.toStringAsFixed(2)}',
+              labelStyle: TextStyle(fontSize: 10, color: colors.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRestingHrSparkline(
+    List<AthleteTrendDay> windowDays,
+    KineColors colors,
+  ) {
+    final values = windowDays
+        .where((day) => day.restingHr != null)
+        .map((day) => day.restingHr!.toDouble())
+        .toList();
+
+    if (values.isEmpty) {
+      return Text(
+        'No resting HR data',
+        style: TextStyle(color: colors.textMuted),
+      );
+    }
+
+    final latest = values.last.round();
+    final minHr = values.reduce((a, b) => a < b ? a : b).round();
+    final maxHr = values.reduce((a, b) => a > b ? a : b).round();
+    final sparkColor = _restingHrColor(values);
+
+    return Container(
+      height: 60,
+      padding: const EdgeInsets.symmetric(
+        horizontal: KineSpacing.md,
+        vertical: KineSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: colors.surfaceCard,
+        borderRadius: BorderRadius.circular(KineRadius.card),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 78,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '$latest bpm',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: colors.textPrimary,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                Text(
+                  'Range $minHr-$maxHr',
+                  style: TextStyle(
+                    fontSize: 10,
                     color: colors.textMuted,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                 ),
-              ),
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    return Align(
-                      alignment: Alignment.centerLeft,
-                      child: Container(
-                        height: 14,
-                        width: constraints.maxWidth * fraction,
-                        decoration: BoxDecoration(
-                          color: KineColors.blue3.withValues(alpha: 0.7),
-                          borderRadius:
-                              BorderRadius.circular(KineRadius.sm),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(width: KineSpacing.sm),
-              SizedBox(
-                width: 36,
-                child: Text(
-                  day.trimp!.round().toString(),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: colors.textSecondary,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                  textAlign: TextAlign.right,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        );
-      }).toList(),
-    );
-  }
-
-  /// Text list of lnRMSSD values.
-  Widget _buildHrvValues(AthleteTrend trend, KineColors colors) {
-    final daysWithHrv =
-        trend.days.where((d) => d.lnRmssd != null).toList();
-
-    if (daysWithHrv.isEmpty) {
-      return Text('No HRV data', style: TextStyle(color: colors.textMuted));
-    }
-
-    return Wrap(
-      spacing: KineSpacing.md,
-      runSpacing: KineSpacing.xs,
-      children: daysWithHrv.map((day) {
-        return SizedBox(
-          width: 72,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _shortDate(day.date),
-                style: TextStyle(fontSize: 10, color: colors.textMuted),
-              ),
-              Text(
-                day.lnRmssd!.toStringAsFixed(2),
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: colors.textPrimary,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+          const SizedBox(width: KineSpacing.md),
+          Expanded(
+            child: AppKineChartTheme(
+              child: SparklineChart(
+                data: SparklineData(
+                  values: values,
+                  color: sparkColor,
+                  lineWidth: 2.0,
+                  showArea: true,
+                  areaAlpha: 18,
+                  showEndDot: true,
+                  dotRadius: 2.4,
                 ),
               ),
-            ],
+            ),
           ),
-        );
-      }).toList(),
-    );
-  }
-
-  /// Text list of resting HR values.
-  Widget _buildRestingHrValues(AthleteTrend trend, KineColors colors) {
-    final daysWithHr =
-        trend.days.where((d) => d.restingHr != null).toList();
-
-    if (daysWithHr.isEmpty) {
-      return Text('No resting HR data', style: TextStyle(color: colors.textMuted));
-    }
-
-    // Display as arrow-separated chain
-    final chain = daysWithHr.map((d) => '${d.restingHr}').join(' → ');
-    return Text(
-      chain,
-      style: TextStyle(
-        fontSize: 13,
-        color: colors.textPrimary,
-        fontFeatures: const [FontFeature.tabularFigures()],
+        ],
       ),
     );
+  }
+
+  Widget _buildChartCard({
+    required KineColors colors,
+    required double height,
+    required Widget child,
+  }) {
+    return Container(
+      height: height,
+      padding: const EdgeInsets.fromLTRB(
+        KineSpacing.sm,
+        KineSpacing.sm,
+        KineSpacing.sm,
+        KineSpacing.xs,
+      ),
+      decoration: BoxDecoration(
+        color: colors.surfaceCard,
+        borderRadius: BorderRadius.circular(KineRadius.card),
+      ),
+      child: child,
+    );
+  }
+
+  void _configureTrimpChart(List<AthleteTrendDay> windowDays) {
+    final token = Object.hashAll([
+      Theme.of(context).brightness,
+      _periodDays,
+      for (final day in windowDays) day.trimp ?? -1.0,
+    ]);
+    if (_trimpChartToken == token) return;
+    _trimpChartToken = token;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = _trimpChartKey.currentState;
+      if (!mounted || state == null) return;
+
+      state.animateOnDataChange = false;
+      state.highlightPerTapEnabled = false;
+      state.dragXEnabled = false;
+      state.dragYEnabled = false;
+      state.scaleXEnabled = false;
+      state.scaleYEnabled = false;
+      state.pinchZoomEnabled = false;
+      state.doubleTapToZoomEnabled = false;
+      state.legend.enabled = false;
+      state.rightAxis.enabled = false;
+      state.leftAxis.axisMinimum = 0;
+      state.leftAxis.spaceTop = 0.15;
+      state.leftAxis.spaceBottom = 0;
+      state.leftAxis.drawAxisLineEnabled = false;
+      state.leftAxis.setLabelCount(4, true);
+      state.xAxis.drawGridLinesEnabled = false;
+      state.xAxis.drawAxisLineEnabled = false;
+      state.xAxis.labelPosition = XAxisLabelPosition.bottom;
+      state.xAxis.granularityEnabled = true;
+      state.xAxis.granularity = 1;
+      state.xAxis.setLabelCount(_chartLabelCount(windowDays.length), true);
+      state.xAxisRenderer.formatter = FuncAxisValueFormatter((value) {
+        final index = value.round().clamp(0, windowDays.length - 1);
+        return _axisDateLabel(windowDays[index].date);
+      });
+      state.yAxisRendererLeft.formatter = const FuncAxisValueFormatter(
+        _wholeNumberLabel,
+      );
+      state.notifyDataSetChanged();
+    });
+  }
+
+  void _configureHrvChart(List<AthleteTrendDay> windowDays) {
+    final token = Object.hashAll([
+      Theme.of(context).brightness,
+      _periodDays,
+      for (final day in windowDays) day.lnRmssd ?? -1.0,
+    ]);
+    if (_hrvChartToken == token) return;
+    _hrvChartToken = token;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final state = _hrvChartKey.currentState;
+      if (!mounted || state == null) return;
+
+      state.animateOnDataChange = false;
+      state.highlightPerTapEnabled = false;
+      state.dragXEnabled = false;
+      state.dragYEnabled = false;
+      state.scaleXEnabled = false;
+      state.scaleYEnabled = false;
+      state.pinchZoomEnabled = false;
+      state.doubleTapToZoomEnabled = false;
+      state.legend.enabled = false;
+      state.rightAxis.enabled = false;
+      state.leftAxis.spaceTop = 0.18;
+      state.leftAxis.spaceBottom = 0.18;
+      state.leftAxis.drawAxisLineEnabled = false;
+      state.leftAxis.setLabelCount(4, true);
+      state.xAxis.drawGridLinesEnabled = false;
+      state.xAxis.drawAxisLineEnabled = false;
+      state.xAxis.labelPosition = XAxisLabelPosition.bottom;
+      state.xAxis.granularityEnabled = true;
+      state.xAxis.granularity = 1;
+      state.xAxis.setLabelCount(_chartLabelCount(windowDays.length), true);
+      state.xAxisRenderer.formatter = FuncAxisValueFormatter((value) {
+        final index = value.round().clamp(0, windowDays.length - 1);
+        return _axisDateLabel(windowDays[index].date);
+      });
+      state.yAxisRendererLeft.formatter = const FuncAxisValueFormatter(
+        _decimalLabel,
+      );
+      state.notifyDataSetChanged();
+    });
+  }
+
+  List<AthleteTrendDay> _trendWindow(AthleteTrend trend) {
+    final dayMap = <String, AthleteTrendDay>{
+      for (final day in trend.days) _dateKey(day.date): day,
+    };
+    final now = DateTime.now();
+    final end = DateTime(now.year, now.month, now.day);
+
+    return List.generate(_periodDays, (index) {
+      final date = end.subtract(Duration(days: _periodDays - 1 - index));
+      return dayMap[_dateKey(date)] ?? AthleteTrendDay(date: date);
+    });
+  }
+
+  int _chartLabelCount(int dayCount) {
+    if (dayCount <= 7) return dayCount;
+    if (dayCount <= 14) return 7;
+    return 6;
+  }
+
+  String _axisDateLabel(DateTime date) {
+    if (_periodDays <= 7) {
+      return _weekdayShort(date);
+    }
+    return _shortDate(date);
+  }
+
+  Color _trimpColor(double value) {
+    if (value <= 0) return KineColors.gray2.withValues(alpha: 0.55);
+    if (value < 80) return KineColors.blue3;
+    if (value < 140) return KineColors.green2;
+    if (value < 190) return KineColors.yellow0;
+    if (value < 240) return KineColors.orange1;
+    return KineColors.red3;
+  }
+
+  Color _restingHrColor(List<double> values) {
+    final mean =
+        values.fold<double>(0.0, (sum, value) => sum + value) / values.length;
+    final latest = values.last;
+    if (latest >= mean + 2.5) return KineColors.red3;
+    if (latest >= mean + 1.0) return KineColors.orange1;
+    if (latest <= mean - 1.5) return KineColors.green2;
+    return KineColors.blue3;
   }
 
   Widget _emptyState(KineColors colors) {
@@ -482,9 +701,16 @@ class _TrendsScreenState extends State<TrendsScreen> {
     );
   }
 
-  String _shortDate(DateTime d) =>
-      '${d.day}/${d.month.toString().padLeft(2, '0')}';
+  String _shortDate(DateTime date) =>
+      '${date.day}/${date.month.toString().padLeft(2, '0')}';
 
-  String _weekdayShort(DateTime d) =>
-      const ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'][d.weekday - 1];
+  String _weekdayShort(DateTime date) =>
+      const ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'][date.weekday - 1];
+
+  String _dateKey(DateTime date) =>
+      '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
+
+  static String _wholeNumberLabel(double value) => value.toStringAsFixed(0);
+
+  static String _decimalLabel(double value) => value.toStringAsFixed(1);
 }

@@ -18,6 +18,9 @@ class CoachDataService extends ChangeNotifier {
   String _error = '';
   String get error => _error;
 
+  TeamInfo? _teamInfo;
+  TeamInfo? get teamInfo => _teamInfo;
+
   List<AthleteReadiness> _todayReadiness = [];
   List<AthleteReadiness> get todayReadiness => _todayReadiness;
 
@@ -38,8 +41,7 @@ class CoachDataService extends ChangeNotifier {
   List<TeamAlert> get alerts => _alerts;
 
   int get totalRoster => _roster.length;
-  int get checkedInCount =>
-      _todayReadiness.where((r) => r.hasData).length;
+  int get checkedInCount => _todayReadiness.where((r) => r.hasData).length;
 
   // --- Supabase client ---
 
@@ -49,6 +51,118 @@ class CoachDataService extends ChangeNotifier {
     } catch (_) {
       return null;
     }
+  }
+
+  // --- Team management ---
+
+  Future<TeamInfo?> getTeamInfo() async {
+    _error = '';
+
+    try {
+      _teamInfo = await _fetchTeamInfo();
+      return _teamInfo;
+    } catch (e) {
+      _error = _errorMessage(e);
+      rethrow;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<List<({String id, String name})>> getRoster() async {
+    _error = '';
+
+    try {
+      final team = await _fetchTeamInfo();
+      _teamInfo = team;
+
+      if (team == null) {
+        _roster = [];
+        return _roster;
+      }
+
+      final rosterRes = await _requireClient()
+          .from('athletes')
+          .select('id, name')
+          .eq('team_id', team.id)
+          .order('name');
+
+      _roster = (rosterRes as List)
+          .map(
+            (row) => (
+              id: row['id'] as String,
+              name: (row['name'] as String?)?.trim().isNotEmpty == true
+                  ? (row['name'] as String).trim()
+                  : 'Athlete',
+            ),
+          )
+          .toList();
+
+      return _roster;
+    } catch (e) {
+      _error = _errorMessage(e);
+      rethrow;
+    } finally {
+      notifyListeners();
+    }
+  }
+
+  Future<void> assignAthleteToTeam(String athleteId) async {
+    final trimmedId = athleteId.trim();
+    if (!_isUuid(trimmedId)) {
+      throw const FormatException('Enter a valid athlete ID (UUID).');
+    }
+
+    await _runMutation(() async {
+      final team = await _requireTeamInfo();
+      await _requireClient().rpc(
+        'assign_athlete_to_team',
+        params: {'p_athlete_id': trimmedId, 'p_team_id': team.id},
+      );
+
+      await getRoster();
+      if (!_roster.any((athlete) => athlete.id == trimmedId)) {
+        throw StateError(
+          'Athlete was not added. Confirm the UUID is correct and that the athlete is not already on another team.',
+        );
+      }
+    });
+  }
+
+  Future<void> removeAthleteFromTeam(String athleteId) async {
+    final trimmedId = athleteId.trim();
+    if (!_isUuid(trimmedId)) {
+      throw const FormatException('Enter a valid athlete ID (UUID).');
+    }
+
+    await _runMutation(() async {
+      final team = await _requireTeamInfo();
+      await _requireClient().rpc(
+        'remove_athlete_from_team',
+        params: {'p_athlete_id': trimmedId, 'p_team_id': team.id},
+      );
+
+      await getRoster();
+      if (_roster.any((athlete) => athlete.id == trimmedId)) {
+        throw StateError('Athlete could not be removed from this team.');
+      }
+    });
+  }
+
+  Future<void> updateTeamName(String name) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      throw const FormatException('Team name cannot be empty.');
+    }
+
+    await _runMutation(() async {
+      final team = await _requireTeamInfo();
+      await _requireClient()
+          .from('teams')
+          .update({'name': trimmedName})
+          .eq('id', team.id);
+      _teamInfo = TeamInfo(id: team.id, name: trimmedName);
+    });
   }
 
   // --- Load methods ---
@@ -64,18 +178,35 @@ class CoachDataService extends ChangeNotifier {
       if (client == null) throw Exception('Not connected to cloud');
 
       final today = _todayString();
+      final historyStart = DateTime.now().subtract(const Duration(days: 6));
+      final historyStartStr =
+          '${historyStart.year}-${_pad(historyStart.month)}-${_pad(historyStart.day)}';
+      final rosterList = await getRoster();
+
+      if (rosterList.isEmpty) {
+        _todayReadiness = [];
+        _loading = false;
+        notifyListeners();
+        return;
+      }
 
       final res = await client
           .from('daily_wellness')
           .select('*, athletes(id, name)')
           .eq('date', today);
+      final historyRes = await client
+          .from('daily_wellness')
+          .select('athlete_id, date, ln_rmssd')
+          .gte('date', historyStartStr)
+          .order('date');
 
-      final rosterRes = await client.from('athletes').select('id, name');
-
-      final rosterList = (rosterRes as List)
-          .map((r) => (id: r['id'] as String, name: r['name'] as String))
-          .toList();
-      _roster = rosterList;
+      final lnRmssdHistory = <String, List<double>>{};
+      for (final row in (historyRes as List)) {
+        final athleteId = row['athlete_id'] as String?;
+        final value = (row['ln_rmssd'] as num?)?.toDouble();
+        if (athleteId == null || value == null) continue;
+        (lnRmssdHistory[athleteId] ??= <double>[]).add(value);
+      }
 
       final checkedIn = <String, Map<String, dynamic>>{};
       for (final row in (res as List)) {
@@ -93,6 +224,7 @@ class CoachDataService extends ChangeNotifier {
             restingHr: data['resting_hr'] as int? ?? 0,
             lnRmssd: (data['ln_rmssd'] as num?)?.toDouble() ?? 0.0,
             hasData: true,
+            last7LnRmssd: lnRmssdHistory[a.id] ?? const [],
           );
         } else {
           return AthleteReadiness(
@@ -102,10 +234,10 @@ class CoachDataService extends ChangeNotifier {
             restingHr: 0,
             lnRmssd: 0.0,
             hasData: false,
+            last7LnRmssd: lnRmssdHistory[a.id] ?? const [],
           );
         }
-      }).toList()
-        ..sort((a, b) => a.sortPriority.compareTo(b.sortPriority));
+      }).toList()..sort((a, b) => a.sortPriority.compareTo(b.sortPriority));
 
       _loading = false;
       notifyListeners();
@@ -168,8 +300,7 @@ class CoachDataService extends ChangeNotifier {
   }
 
   /// Load trend data for one athlete over [days] days.
-  Future<void> loadAthleteTrend(String athleteId,
-      {int days = 28}) async {
+  Future<void> loadAthleteTrend(String athleteId, {int days = 28}) async {
     _loading = true;
     _error = '';
     _currentTrend = null;
@@ -183,8 +314,11 @@ class CoachDataService extends ChangeNotifier {
       final startStr =
           '${startDate.year}-${_pad(startDate.month)}-${_pad(startDate.day)}';
 
-      final athleteRes =
-          await client.from('athletes').select('name').eq('id', athleteId).single();
+      final athleteRes = await client
+          .from('athletes')
+          .select('name')
+          .eq('id', athleteId)
+          .single();
       final name = athleteRes['name'] as String;
 
       final wellnessRes = await client
@@ -237,8 +371,7 @@ class CoachDataService extends ChangeNotifier {
           .toList();
 
       final acuteLoad = last7.fold(0.0, (s, d) => s + (d.trimp ?? 0));
-      final dailyTrimpLast28 =
-          last28.map((d) => d.trimp ?? 0.0).toList();
+      final dailyTrimpLast28 = last28.map((d) => d.trimp ?? 0.0).toList();
       final chronicLoad = dailyTrimpLast28.isEmpty
           ? 0.0
           : (dailyTrimpLast28.fold(0.0, (s, v) => s + v) / 28) * 7;
@@ -253,10 +386,9 @@ class CoachDataService extends ChangeNotifier {
       double? strain;
       if (last7.isNotEmpty) {
         final trimps7 = last7.map((d) => d.trimp ?? 0.0).toList();
-        final mean7 =
-            trimps7.fold(0.0, (s, v) => s + v) / trimps7.length;
-        final variance7 = trimps7.fold(
-                0.0, (s, v) => s + (v - mean7) * (v - mean7)) /
+        final mean7 = trimps7.fold(0.0, (s, v) => s + v) / trimps7.length;
+        final variance7 =
+            trimps7.fold(0.0, (s, v) => s + (v - mean7) * (v - mean7)) /
             trimps7.length;
         final sd7 = _sqrt(variance7);
         if (sd7 > 0) {
@@ -304,10 +436,14 @@ class CoachDataService extends ChangeNotifier {
       final last28Str =
           '${last28Start.year}-${_pad(last28Start.month)}-${_pad(last28Start.day)}';
 
-      final rosterRes = await client.from('athletes').select('id, name');
-      _roster = (rosterRes as List)
-          .map((r) => (id: r['id'] as String, name: r['name'] as String))
-          .toList();
+      final roster = await getRoster();
+      if (roster.isEmpty) {
+        _teamRows = [];
+        _alerts = [];
+        _loading = false;
+        notifyListeners();
+        return;
+      }
 
       // Fetch this week's sessions and last 28 days
       final weekSessions = await client
@@ -341,7 +477,8 @@ class CoachDataService extends ChangeNotifier {
       for (final s in (weekSessions as List)) {
         final id = s['athlete_id'] as String;
         weekTrimps[id] =
-            (weekTrimps[id] ?? 0) + ((s['trimp_edwards'] as num?)?.toDouble() ?? 0);
+            (weekTrimps[id] ?? 0) +
+            ((s['trimp_edwards'] as num?)?.toDouble() ?? 0);
       }
 
       // 28-day chronic for each athlete
@@ -349,7 +486,8 @@ class CoachDataService extends ChangeNotifier {
       for (final s in (last28Sessions as List)) {
         final id = s['athlete_id'] as String;
         chronicMap[id] =
-            (chronicMap[id] ?? 0) + ((s['trimp_edwards'] as num?)?.toDouble() ?? 0);
+            (chronicMap[id] ?? 0) +
+            ((s['trimp_edwards'] as num?)?.toDouble() ?? 0);
       }
 
       final todayReadinessMap = <String, String>{};
@@ -366,7 +504,7 @@ class CoachDataService extends ChangeNotifier {
         }
       }
 
-      _teamRows = _roster.map((a) {
+      _teamRows = roster.map((a) {
         final weekTrimp = weekTrimps[a.id] ?? 0;
         final chronicTotal = chronicMap[a.id] ?? 0;
         final chronic = (chronicTotal / 28) * 7;
@@ -405,31 +543,38 @@ class CoachDataService extends ChangeNotifier {
     for (final row in rows) {
       // ACWR > 1.5 = high
       if (row.acwr != null && row.acwr! > 1.5) {
-        alerts.add(TeamAlert(
-          message:
-              '${row.name}: ACWR ${row.acwr!.toStringAsFixed(2)} — high injury risk',
-          priority: 'high',
-        ));
+        alerts.add(
+          TeamAlert(
+            message:
+                '${row.name}: ACWR ${row.acwr!.toStringAsFixed(2)} — high injury risk',
+            priority: 'high',
+          ),
+        );
       }
 
       // Red readiness 3+ consecutive days
       if (row.redDays >= 3) {
-        alerts.add(TeamAlert(
-          message:
-              '${row.name}: RED readiness ${row.redDays} consecutive days',
-          priority: 'high',
-        ));
+        alerts.add(
+          TeamAlert(
+            message:
+                '${row.name}: RED readiness ${row.redDays} consecutive days',
+            priority: 'high',
+          ),
+        );
       }
     }
 
     // Missing check-in today
     final missingCount = rows.where((r) => r.readiness.isEmpty).length;
     if (missingCount > 0) {
-      alerts.add(TeamAlert(
-        message: '$missingCount athlete${missingCount == 1 ? '' : 's'}'
-            ' ha${missingCount == 1 ? 's' : 've'} not checked in today',
-        priority: 'low',
-      ));
+      alerts.add(
+        TeamAlert(
+          message:
+              '$missingCount athlete${missingCount == 1 ? '' : 's'}'
+              ' ha${missingCount == 1 ? 's' : 've'} not checked in today',
+          priority: 'low',
+        ),
+      );
     }
 
     alerts.sort((a, b) => a.sortPriority.compareTo(b.sortPriority));
@@ -470,11 +615,59 @@ class CoachDataService extends ChangeNotifier {
       'green', 'green', '', '', '', '',
     ];
 
-    const hrs = [54, 61, 68, 72, 58, 55, 52, 0, 56, 59, 65, 57, 53, 74, 60, 55, 58, 54, 0, 0, 0, 0];
-    const rmssd = [4.31, 4.18, 3.89, 3.42, 4.25, 4.35, 4.41, 0.0, 4.22, 4.15, 3.95, 4.28, 4.38, 3.51, 4.12, 4.33, 4.19, 4.30, 0.0, 0.0, 0.0, 0.0];
+    const hrs = [
+      54,
+      61,
+      68,
+      72,
+      58,
+      55,
+      52,
+      0,
+      56,
+      59,
+      65,
+      57,
+      53,
+      74,
+      60,
+      55,
+      58,
+      54,
+      0,
+      0,
+      0,
+      0,
+    ];
+    const rmssd = [
+      4.31,
+      4.18,
+      3.89,
+      3.42,
+      4.25,
+      4.35,
+      4.41,
+      0.0,
+      4.22,
+      4.15,
+      3.95,
+      4.28,
+      4.38,
+      3.51,
+      4.12,
+      4.33,
+      4.19,
+      4.30,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+    ];
 
-    _roster = List.generate(names.length,
-        (i) => (id: 'sample-$i', name: names[i]));
+    _roster = List.generate(
+      names.length,
+      (i) => (id: 'sample-$i', name: names[i]),
+    );
 
     _todayReadiness = List.generate(names.length, (i) {
       final r = readinessValues[i];
@@ -485,9 +678,17 @@ class CoachDataService extends ChangeNotifier {
         restingHr: hrs[i],
         lnRmssd: rmssd[i],
         hasData: r.isNotEmpty,
+        last7LnRmssd: i < 18
+            ? List.generate(7, (offset) {
+                final baseline = rmssd[i] == 0.0
+                    ? 4.0 + (i % 5) * 0.06
+                    : rmssd[i];
+                final wave = ((offset + i) % 5 - 2) * 0.04;
+                return double.parse((baseline + wave).toStringAsFixed(2));
+              })
+            : const [],
       );
-    })
-      ..sort((a, b) => a.sortPriority.compareTo(b.sortPriority));
+    })..sort((a, b) => a.sortPriority.compareTo(b.sortPriority));
   }
 
   void _loadSampleSessions() {
@@ -585,22 +786,23 @@ class CoachDataService extends ChangeNotifier {
       );
     });
 
-    final last7 =
-        trendDays.where((d) => now.difference(d.date).inDays < 7).toList();
+    final last7 = trendDays
+        .where((d) => now.difference(d.date).inDays < 7)
+        .toList();
     final acuteLoad = last7.fold(0.0, (s, d) => s + (d.trimp ?? 0));
     final allTrimp = trendDays.map((d) => d.trimp ?? 0.0).toList();
-    final chronicLoad =
-        (allTrimp.fold(0.0, (s, v) => s + v) / 28) * 7;
+    final chronicLoad = (allTrimp.fold(0.0, (s, v) => s + v) / 28) * 7;
     double? acwr;
     if (chronicLoad > 0) acwr = acuteLoad / chronicLoad;
 
     final trimps7 = last7.map((d) => d.trimp ?? 0.0).toList();
-    final mean7 =
-        trimps7.isEmpty ? 0.0 : trimps7.fold(0.0, (s, v) => s + v) / trimps7.length;
+    final mean7 = trimps7.isEmpty
+        ? 0.0
+        : trimps7.fold(0.0, (s, v) => s + v) / trimps7.length;
     final variance7 = trimps7.isEmpty
         ? 0.0
         : trimps7.fold(0.0, (s, v) => s + (v - mean7) * (v - mean7)) /
-            trimps7.length;
+              trimps7.length;
     final sd7 = _sqrt(variance7);
     double? monotony;
     double? strain;
@@ -609,10 +811,12 @@ class CoachDataService extends ChangeNotifier {
       strain = acuteLoad * monotony;
     }
 
-    final name = _roster
-        .where((r) => r.id == athleteId)
-        .map((r) => r.name)
-        .firstOrNull ?? 'Athlete';
+    final name =
+        _roster
+            .where((r) => r.id == athleteId)
+            .map((r) => r.name)
+            .firstOrNull ??
+        'Athlete';
 
     _currentTrend = AthleteTrend(
       athleteId: athleteId,
@@ -631,10 +835,104 @@ class CoachDataService extends ChangeNotifier {
       _loadSampleReadiness(); // Populates roster
     }
 
-    final sampleAcwr = [1.52, 1.24, 1.11, 0.72, 1.15, 1.08, 0.95, null, 1.02, 1.18, 0.88, 1.05, 1.12, 1.42, 0.91, 1.01, 1.22, 1.09, null, null, null, null];
-    final sampleWeekTrimp = <double>[823, 612, 580, 445, 520, 510, 490, 0, 475, 540, 395, 505, 530, 680, 440, 485, 560, 500, 0, 0, 0, 0];
-    final sampleReadiness = ['amber', 'green', 'green', 'green', 'green', 'green', 'green', '', 'green', 'green', 'amber', 'green', 'green', 'red', 'green', 'green', 'green', 'green', '', '', '', ''];
-    final sampleRedDays = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0];
+    _teamInfo ??= const TeamInfo(id: 'sample-team', name: 'Sample Team');
+
+    final sampleAcwr = [
+      1.52,
+      1.24,
+      1.11,
+      0.72,
+      1.15,
+      1.08,
+      0.95,
+      null,
+      1.02,
+      1.18,
+      0.88,
+      1.05,
+      1.12,
+      1.42,
+      0.91,
+      1.01,
+      1.22,
+      1.09,
+      null,
+      null,
+      null,
+      null,
+    ];
+    final sampleWeekTrimp = <double>[
+      823,
+      612,
+      580,
+      445,
+      520,
+      510,
+      490,
+      0,
+      475,
+      540,
+      395,
+      505,
+      530,
+      680,
+      440,
+      485,
+      560,
+      500,
+      0,
+      0,
+      0,
+      0,
+    ];
+    final sampleReadiness = [
+      'amber',
+      'green',
+      'green',
+      'green',
+      'green',
+      'green',
+      'green',
+      '',
+      'green',
+      'green',
+      'amber',
+      'green',
+      'green',
+      'red',
+      'green',
+      'green',
+      'green',
+      'green',
+      '',
+      '',
+      '',
+      '',
+    ];
+    final sampleRedDays = [
+      2,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      0,
+      0,
+      3,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ];
 
     _teamRows = List.generate(_roster.length, (i) {
       final acwr = i < sampleAcwr.length ? sampleAcwr[i] : null;
@@ -659,6 +957,59 @@ class CoachDataService extends ChangeNotifier {
     return '${now.year}-${_pad(now.month)}-${_pad(now.day)}';
   }
 
+  SupabaseClient _requireClient() {
+    final client = _client;
+    if (client == null) {
+      throw Exception('Not connected to cloud');
+    }
+    return client;
+  }
+
+  Future<TeamInfo?> _fetchTeamInfo() async {
+    final client = _requireClient();
+    final coachId = client.auth.currentUser?.id;
+    if (coachId == null) {
+      throw Exception('You must be signed in to manage a team.');
+    }
+
+    final coachRes = await client
+        .from('coaches')
+        .select('team_id')
+        .eq('id', coachId)
+        .maybeSingle();
+
+    final teamId = coachRes?['team_id'] as String?;
+    if (teamId == null || teamId.isEmpty) {
+      return null;
+    }
+
+    String teamName = 'Team';
+    try {
+      final teamRes = await client
+          .from('teams')
+          .select('id, name')
+          .eq('id', teamId)
+          .maybeSingle();
+      final fetchedName = teamRes?['name'] as String?;
+      if (fetchedName != null && fetchedName.trim().isNotEmpty) {
+        teamName = fetchedName.trim();
+      }
+    } catch (_) {
+      // Keep the ID even if team-name read access is not configured yet.
+    }
+
+    return TeamInfo(id: teamId, name: teamName);
+  }
+
+  Future<TeamInfo> _requireTeamInfo() async {
+    final team = _teamInfo ?? await _fetchTeamInfo();
+    _teamInfo = team;
+    if (team == null) {
+      throw StateError('No team is linked to this coach yet.');
+    }
+    return team;
+  }
+
   static String _pad(int n) => n.toString().padLeft(2, '0');
 
   static String _acwrRisk(double? acwr) {
@@ -677,5 +1028,40 @@ class CoachDataService extends ChangeNotifier {
       x = (x + v / x) / 2;
     }
     return x;
+  }
+
+  Future<void> _runMutation(Future<void> Function() action) async {
+    _loading = true;
+    _error = '';
+    notifyListeners();
+
+    try {
+      await action();
+    } catch (e) {
+      _error = _errorMessage(e);
+      rethrow;
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  static bool _isUuid(String value) {
+    final uuidPattern = RegExp(
+      r'^[0-9a-fA-F]{8}-'
+      r'[0-9a-fA-F]{4}-'
+      r'[1-5][0-9a-fA-F]{3}-'
+      r'[89abAB][0-9a-fA-F]{3}-'
+      r'[0-9a-fA-F]{12}$',
+    );
+    return uuidPattern.hasMatch(value);
+  }
+
+  static String _errorMessage(Object error) {
+    return switch (error) {
+      AuthException(:final message) when message.isNotEmpty => message,
+      PostgrestException(:final message) when message.isNotEmpty => message,
+      _ => error.toString(),
+    };
   }
 }
