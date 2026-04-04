@@ -39,7 +39,7 @@ impl std::fmt::Display for HrvError {
 
 impl std::error::Error for HrvError {}
 
-const MIN_SAMPLES: usize = 30;
+const MIN_SAMPLES: usize = 20;
 
 /// Compute HRV metrics from PPI samples.
 ///
@@ -224,10 +224,10 @@ mod tests {
 
     #[test]
     fn test_not_enough_samples() {
-        let samples: Vec<PpiInput> = vec![ppi(1000); 10];
+        let samples: Vec<PpiInput> = vec![ppi(1000); 15];
         let result = compute_hrv(&samples, 0.0);
         match result {
-            Err(HrvError::NotEnoughSamples { got: 10, need: 30 }) => {}
+            Err(HrvError::NotEnoughSamples { got: 15, need: 20 }) => {}
             other => panic!("expected NotEnoughSamples, got {:?}", other),
         }
     }

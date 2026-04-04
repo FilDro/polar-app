@@ -11,7 +11,6 @@ use crate::ble_runtime::{BleCommand, BleEvent, BleRuntime, StreamConfig};
 use crate::state::*;
 
 const MORNING_WARMUP_S: f64 = 25.0;
-const MORNING_MIN_SAMPLES: usize = 30;
 
 struct PreprocessedMorningSamples {
     diagnostics: MorningCheckDiagnostics,
@@ -226,7 +225,7 @@ impl PolarSession {
             baseline_phase, compute_7day_mean, compute_baseline, score_readiness, BaselinePhase,
         };
 
-        let preprocessed = preprocess_morning_samples(&self.morning_ppi_buffer, MORNING_WARMUP_S);
+        let preprocessed = preprocess_morning_samples(&self.morning_ppi_buffer);
         self.morning_check.diagnostics = Some(preprocessed.diagnostics.clone());
 
         if preprocessed.diagnostics.raw_samples == 0 {
@@ -238,24 +237,10 @@ impl PolarSession {
             return MorningResult::default();
         }
 
-        if preprocessed.diagnostics.valid_post_warmup == 0 {
-            self.morning_check.phase = MorningCheckPhase::Error;
-            self.morning_check.error = "no valid RR intervals after warmup".to_string();
-            self.morning_check.result = None;
-            return MorningResult::default();
-        }
-
-        if preprocessed.diagnostics.valid_post_warmup < MORNING_MIN_SAMPLES {
-            self.morning_check.phase = MorningCheckPhase::Error;
-            self.morning_check.error = format!(
-                "not enough samples: got {}, need {}",
-                preprocessed.diagnostics.valid_post_warmup, MORNING_MIN_SAMPLES
-            );
-            self.morning_check.result = None;
-            return MorningResult::default();
-        }
-
-        let hrv = match compute_hrv(&preprocessed.inputs, 0.0) {
+        // Warmup filtering is handled inside compute_hrv using cumulative PPI
+        // time (not wall-clock time) to avoid discarding valid samples from
+        // large initial batches common with the Verity Sense optical sensor.
+        let hrv = match compute_hrv(&preprocessed.inputs, MORNING_WARMUP_S) {
             Ok(r) => r,
             Err(e) => {
                 self.morning_check.phase = MorningCheckPhase::Error;
@@ -568,25 +553,30 @@ impl PolarSession {
     }
 }
 
+/// Convert timed PPI samples into HRV inputs.
+///
+/// Filters out zero-PPI samples (optical sensor can't determine interval)
+/// and zeroes the flags byte (Verity Sense flags are diagnostic-only, not
+/// the blocker flag used by chest straps).
+///
+/// Warmup is NOT filtered here — it is handled by `compute_hrv` using
+/// cumulative PPI time. Wall-clock warmup was previously used but caused
+/// valid samples to be discarded when the sensor sends large initial
+/// batches that get back-dated past the warmup boundary.
 fn preprocess_morning_samples(
     samples: &[TimedMorningPpiSample],
-    warmup_s: f64,
 ) -> PreprocessedMorningSamples {
     let mut inputs = Vec::with_capacity(samples.len());
-    let mut warmup_discarded = 0usize;
     let mut flagged_samples = 0usize;
+    let mut zero_ppi = 0usize;
 
     for sample in samples {
-        if sample.elapsed_s < warmup_s {
-            warmup_discarded += 1;
-            continue;
-        }
-
         if sample.flags != 0 {
             flagged_samples += 1;
         }
 
         if sample.ppi_ms == 0 {
+            zero_ppi += 1;
             continue;
         }
 
@@ -605,7 +595,7 @@ fn preprocess_morning_samples(
     PreprocessedMorningSamples {
         diagnostics: MorningCheckDiagnostics {
             raw_samples: samples.len(),
-            warmup_discarded,
+            warmup_discarded: zero_ppi,
             flagged_samples,
             valid_post_warmup: inputs.len(),
         },
@@ -623,7 +613,7 @@ fn derive_hr_bpm(ppi_ms: u16) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_hr_bpm, preprocess_morning_samples, MORNING_MIN_SAMPLES, MORNING_WARMUP_S};
+    use super::{derive_hr_bpm, preprocess_morning_samples};
     use crate::state::TimedMorningPpiSample;
 
     #[test]
@@ -638,36 +628,48 @@ mod tests {
     }
 
     #[test]
-    fn preprocess_discards_by_elapsed_warmup_not_flags() {
+    fn preprocess_keeps_all_nonzero_ppi_and_zeros_flags() {
         let samples = vec![
             timed_sample(24.9, 1000),
             timed_sample(25.1, 980),
             timed_sample(26.0, 960),
         ];
 
-        let preprocessed = preprocess_morning_samples(&samples, MORNING_WARMUP_S);
+        let preprocessed = preprocess_morning_samples(&samples);
 
         assert_eq!(preprocessed.diagnostics.raw_samples, 3);
-        assert_eq!(preprocessed.diagnostics.warmup_discarded, 1);
-        assert_eq!(preprocessed.diagnostics.flagged_samples, 2);
-        assert_eq!(preprocessed.diagnostics.valid_post_warmup, 2);
-        assert_eq!(preprocessed.inputs.len(), 2);
+        assert_eq!(preprocessed.diagnostics.valid_post_warmup, 3);
+        assert_eq!(preprocessed.inputs.len(), 3);
+        // Flags are zeroed for Verity Sense compatibility
         assert!(preprocessed.inputs.iter().all(|sample| sample.flags == 0));
     }
 
     #[test]
-    fn preprocess_matches_cli_like_verity_sense_trace() {
+    fn preprocess_drops_zero_ppi_samples() {
+        let samples = vec![
+            timed_sample(30.0, 1000),
+            timed_sample(31.0, 0),
+            timed_sample(32.0, 950),
+        ];
+
+        let preprocessed = preprocess_morning_samples(&samples);
+
+        assert_eq!(preprocessed.diagnostics.raw_samples, 3);
+        assert_eq!(preprocessed.diagnostics.warmup_discarded, 1); // zero_ppi count
+        assert_eq!(preprocessed.diagnostics.valid_post_warmup, 2);
+        assert_eq!(preprocessed.inputs.len(), 2);
+    }
+
+    #[test]
+    fn preprocess_keeps_all_cli_like_verity_sense_trace() {
         let samples = cli_like_trace_samples();
 
-        let preprocessed = preprocess_morning_samples(&samples, MORNING_WARMUP_S);
+        let preprocessed = preprocess_morning_samples(&samples);
 
         assert_eq!(preprocessed.diagnostics.raw_samples, samples.len());
-        assert!(preprocessed.diagnostics.warmup_discarded > 0);
-        assert_eq!(
-            preprocessed.diagnostics.valid_post_warmup,
-            preprocessed.inputs.len()
-        );
-        assert!(preprocessed.diagnostics.valid_post_warmup >= MORNING_MIN_SAMPLES);
+        // All samples have non-zero ppi_ms, so all should survive preprocessing
+        assert_eq!(preprocessed.diagnostics.valid_post_warmup, samples.len());
+        assert_eq!(preprocessed.inputs.len(), samples.len());
         assert!(preprocessed.inputs.iter().all(|sample| sample.hr > 0));
         assert!(preprocessed.inputs.iter().all(|sample| sample.flags == 0));
     }
