@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'athlete_service.dart';
+import 'cloud_sync_service.dart';
 
 class AuthService extends ChangeNotifier {
   static final AuthService instance = AuthService._();
@@ -179,6 +180,13 @@ class AuthService extends ChangeNotifier {
       }
 
       await AthleteService.instance.init();
+
+      // Hydrate wellness & session history from Supabase
+      final uid = session.user.id;
+      await Future.wait([
+        CloudSyncService.instance.pullWellness(uid),
+        CloudSyncService.instance.pullSessions(uid),
+      ]);
     } catch (e) {
       _error = 'Failed to load athlete profile. Please sign in again.';
       debugPrint('AuthService session sync failed: $e');

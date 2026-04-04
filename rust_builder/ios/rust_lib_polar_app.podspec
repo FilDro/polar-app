@@ -10,6 +10,7 @@ Pod::Spec.new do |s|
   s.source_files     = 'Classes/**/*'
   s.ios.deployment_target = '13.0'
   s.static_framework = true
+  s.dependency 'Flutter'
 
   s.script_phase = {
     :name => 'Build Rust library',

@@ -153,6 +153,16 @@ class AppDatabase extends _$AppDatabase {
     return into(sessionEntries).insert(entry);
   }
 
+  /// Check if a session already exists for a given athlete and start time.
+  Future<bool> sessionExists(String athleteId, DateTime startTime) async {
+    final query = select(sessionEntries)
+      ..where((t) => t.athleteId.equals(athleteId))
+      ..where((t) => t.startTime.equals(startTime))
+      ..limit(1);
+    final rows = await query.get();
+    return rows.isNotEmpty;
+  }
+
   /// Get sessions for a specific date.
   Future<List<SessionEntry>> getSessionsForDate(
     String athleteId,
