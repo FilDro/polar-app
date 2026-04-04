@@ -5,8 +5,6 @@ import '../theme/spacing.dart';
 
 enum _AuthMode { signIn, signUp }
 
-enum _AccountRole { athlete, coach }
-
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -20,7 +18,6 @@ class _AuthScreenState extends State<AuthScreen> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   _AuthMode _mode = _AuthMode.signIn;
-  _AccountRole _selectedRole = _AccountRole.athlete;
 
   @override
   void initState() {
@@ -64,7 +61,6 @@ class _AuthScreenState extends State<AuthScreen> {
         email: email,
         password: password,
         name: name,
-        role: _selectedRole.name,
       ),
     };
 
@@ -83,19 +79,10 @@ class _AuthScreenState extends State<AuthScreen> {
     setState(() => _mode = mode);
   }
 
-  void _setRole(_AccountRole role) {
-    if (_selectedRole == role) return;
-    _auth.clearError();
-    setState(() => _selectedRole = role);
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = KineColors.of(context);
     final isSignUp = _mode == _AuthMode.signUp;
-    final selectedRoleLabel = _selectedRole == _AccountRole.coach
-        ? 'coach'
-        : 'athlete';
 
     return Scaffold(
       body: SafeArea(
@@ -119,7 +106,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                   const SizedBox(height: KineSpacing.sm),
                   Text(
-                    'Athlete and coach access',
+                    'Team monitoring',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 14, color: colors.textSecondary),
                   ),
@@ -171,7 +158,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           const SizedBox(height: KineSpacing.lg),
                           Text(
                             isSignUp
-                                ? 'Create your $selectedRoleLabel account'
+                                ? 'Create your account'
                                 : 'Sign in to continue',
                             style: TextStyle(
                               fontSize: 20,
@@ -182,8 +169,8 @@ class _AuthScreenState extends State<AuthScreen> {
                           const SizedBox(height: KineSpacing.sm),
                           Text(
                             isSignUp
-                                ? 'Email confirmation is disabled for this testing build. New $selectedRoleLabel accounts enter the app immediately.'
-                                : 'Use your athlete or coach email and password to access the app.',
+                                ? 'Email confirmation is disabled for this testing build.'
+                                : 'Use your email and password to access the app.',
                             style: TextStyle(
                               fontSize: 13,
                               color: colors.textSecondary,
@@ -213,26 +200,6 @@ class _AuthScreenState extends State<AuthScreen> {
                           ],
                           const SizedBox(height: KineSpacing.lg),
                           if (isSignUp) ...[
-                            SegmentedButton<_AccountRole>(
-                              segments: const [
-                                ButtonSegment<_AccountRole>(
-                                  value: _AccountRole.athlete,
-                                  icon: Icon(Icons.directions_run),
-                                  label: Text('Athlete'),
-                                ),
-                                ButtonSegment<_AccountRole>(
-                                  value: _AccountRole.coach,
-                                  icon: Icon(Icons.groups_2_outlined),
-                                  label: Text('Coach'),
-                                ),
-                              ],
-                              selected: {_selectedRole},
-                              showSelectedIcon: false,
-                              onSelectionChanged: (selection) {
-                                _setRole(selection.first);
-                              },
-                            ),
-                            const SizedBox(height: KineSpacing.md),
                             TextField(
                               controller: _nameCtrl,
                               decoration: const InputDecoration(
