@@ -85,9 +85,15 @@ class AppDatabase extends _$AppDatabase {
         .go();
   }
 
-  /// Insert or update a wellness entry (upsert by athlete+date).
+  /// Insert or update a wellness entry (upsert by athlete+date composite key).
   Future<void> upsertWellness(DailyWellnessEntriesCompanion entry) async {
-    await into(dailyWellnessEntries).insertOnConflictUpdate(entry);
+    await into(dailyWellnessEntries).insert(
+      entry,
+      onConflict: DoUpdate(
+        (old) => entry,
+        target: [dailyWellnessEntries.athleteId, dailyWellnessEntries.date],
+      ),
+    );
   }
 
   /// Get the baseline lnRMSSD values for the last N days (excluding today).
