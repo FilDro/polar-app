@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../database/database.dart';
 import '../services/ble_service.dart';
 import '../services/athlete_service.dart';
 import '../services/auth_service.dart';
@@ -58,6 +59,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
 
     setState(() {});
+  }
+
+  Future<void> _confirmResetBaseline(
+    BuildContext context,
+    KineColors colors,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset Baseline?'),
+        content: const Text(
+          'This deletes all morning check history. '
+          'Your readiness baseline will start fresh from today.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final athleteId = _athlete.athleteId;
+    if (athleteId == null) return;
+
+    final deleted = await AppDatabase.instance.clearWellnessData(athleteId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Cleared $deleted wellness entries.')),
+    );
   }
 
   @override
@@ -240,6 +277,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
               );
             }),
           ],
+
+          const SizedBox(height: KineSpacing.xl),
+
+          _SectionHeader('Data', colors),
+          const SizedBox(height: KineSpacing.sm),
+          OutlinedButton.icon(
+            onPressed: () => _confirmResetBaseline(context, colors),
+            icon: const Icon(Icons.restart_alt),
+            label: const Text('Reset Baseline'),
+          ),
 
           const SizedBox(height: KineSpacing.xl),
 

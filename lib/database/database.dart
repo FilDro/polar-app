@@ -78,6 +78,13 @@ class AppDatabase extends _$AppDatabase {
 
   // ── Wellness DAO methods ──────────────────────────────────────
 
+  /// Delete all wellness entries for an athlete (reset baseline).
+  Future<int> clearWellnessData(String athleteId) {
+    return (delete(dailyWellnessEntries)
+          ..where((t) => t.athleteId.equals(athleteId)))
+        .go();
+  }
+
   /// Insert or update a wellness entry (upsert by athlete+date).
   Future<void> upsertWellness(DailyWellnessEntriesCompanion entry) async {
     await into(dailyWellnessEntries).insertOnConflictUpdate(entry);
